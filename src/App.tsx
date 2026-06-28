@@ -1,122 +1,388 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { EventBus } from "./services/EventBus";
+import { PluginRegistry } from "./services/PluginRegistry";
+import { WorkspaceService } from "./services/WorkspaceService";
+import { NodeService } from "./services/NodeService";
+import { EdgeService } from "./services/EdgeService";
+import { GraphService } from "./services/GraphService";
+import { NavigationService } from "./services/NavigationService";
+import { ConverterService } from "./services/ConverterService";
+import { CommandHistoryService } from "./services/CommandHistoryService";
+import { AutosaveService } from "./services/AutosaveService";
+import { WorkspaceValidator } from "./services/WorkspaceValidator";
+import { CreateNodeCommand } from "./commands/CreateNodeCommand";
+import { CreateEdgeCommand } from "./commands/CreateEdgeCommand";
+import { CreateGraphCommand } from "./commands/CreateGraphCommand";
+import { useNavigationStore } from "./stores/useNavigationStore";
+import { useGraphStore } from "./stores/useGraphStore";
+import { useUIStore } from "./stores/useUIStore";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import type { CommandContext, Command, Graph } from "./types";
 
-function App() {
-  const [count, setCount] = useState(0)
+import WelcomeScreen from "./components/Welcome/WelcomeScreen";
+import CreateWorkspaceDialog from "./components/Welcome/CreateWorkspaceDialog";
+import OpenWorkspaceDialog from "./components/Welcome/OpenWorkspaceDialog";
+import AppShell from "./components/Layout/AppShell";
+import GraphCanvas from "./components/Graph/GraphCanvas";
+import RelationshipInspector from "./components/Panels/RelationshipInspector";
+import EdgeCreationDialog from "./components/Panels/EdgeCreationDialog";
+import CommandPalette from "./components/CommandPalette/CommandPalette";
+import ValidationOverlay from "./components/Validation/ValidationOverlay";
+import { join } from "@tauri-apps/api/path";
+import { exists, readDir } from "@tauri-apps/plugin-fs";
+import { readJSON } from "./utils/fileSystem";
+import { loadGraph } from "./services/GraphService";
+import { loadNode } from "./services/NodeService";
+
+export default function App() {
+  const [view, setView] = useState<"welcome" | "workspace">("welcome");
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showOpenDialog, setShowOpenDialog] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState("Knowledge Graph");
+  const [currentGraph, setCurrentGraph] = useState<Graph | null>(null);
+
+  const servicesRef = useRef<{
+    eventBus: EventBus;
+    workspaceService: WorkspaceService;
+    nodeService: NodeService;
+    edgeService: EdgeService;
+    graphService: GraphService;
+    navigationService: NavigationService;
+    converterService: ConverterService;
+    commandHistoryService: CommandHistoryService;
+    autosaveService: AutosaveService;
+    validator: WorkspaceValidator;
+    pluginRegistry: PluginRegistry;
+  } | null>(null);
+
+  const navStore = useNavigationStore();
+  const graphStore = useGraphStore();
+  const uiStore = useUIStore();
+
+  useEffect(() => {
+    const eventBus = new EventBus();
+    const workspaceService = new WorkspaceService(eventBus);
+    const nodeService = new NodeService(workspaceService, eventBus);
+    const edgeService = new EdgeService(workspaceService, eventBus);
+    const graphService = new GraphService(workspaceService, eventBus);
+    const navigationService = new NavigationService(graphService, nodeService, eventBus);
+    const converterService = new ConverterService(nodeService, edgeService);
+    const validator = new WorkspaceValidator(nodeService, edgeService, graphService, workspaceService);
+
+    const commandCtx: CommandContext = {
+      eventBus,
+      nodeService,
+      edgeService,
+      graphService,
+      workspaceService,
+      navigationService,
+    };
+    const commandHistoryService = new CommandHistoryService(commandCtx);
+    const autosaveService = new AutosaveService(eventBus, graphService, workspaceService);
+    const pluginRegistry = new PluginRegistry(eventBus, nodeService, edgeService, graphService, navigationService);
+
+    servicesRef.current = {
+      eventBus,
+      workspaceService,
+      nodeService,
+      edgeService,
+      graphService,
+      navigationService,
+      converterService,
+      commandHistoryService,
+      autosaveService,
+      validator,
+      pluginRegistry,
+    };
+
+    autosaveService.start();
+
+    const unsubNavigated = eventBus.on("graph:navigated", (event) => {
+      if (event.payload.toGraphId) {
+        const graph = graphService.getGraph(event.payload.toGraphId);
+        if (graph) {
+          setCurrentGraph(graph);
+          navStore.setCurrentGraphId(graph.id);
+          navStore.setBreadcrumbs(navigationService.getBreadcrumbs());
+          navStore.setCanGoBack(navigationService.canGoBack());
+          navStore.setCanGoForward(navigationService.canGoForward());
+        }
+      }
+    });
+
+    return () => {
+      autosaveService.stop();
+      unsubNavigated();
+    };
+  }, []);
+
+  const handleCreateWorkspace = useCallback(
+    async (path: string, name: string) => {
+      const s = servicesRef.current;
+      if (!s) return;
+
+      await s.workspaceService.create(path, name);
+      const rootGraph = await s.graphService.create(name);
+      s.workspaceService.save();
+      s.navigationService.reset(rootGraph.id);
+      s.converterService.toReactFlow(rootGraph);
+
+      setWorkspaceName(name);
+      setCurrentGraph(rootGraph);
+      navStore.setCurrentGraphId(rootGraph.id);
+      navStore.setBreadcrumbs([{ graphId: rootGraph.id, graphName: name }]);
+      setView("workspace");
+      setShowCreateDialog(false);
+    },
+    [navStore],
+  );
+
+  const handleOpenWorkspace = useCallback(
+    async (path: string) => {
+      const s = servicesRef.current;
+      if (!s) return;
+
+      await s.workspaceService.open(path);
+      const manifest = s.workspaceService.getManifest();
+      if (!manifest) return;
+
+      const nodesDir = await join(path, "nodes");
+      if (await exists(nodesDir)) {
+        const entries = await readDir(nodesDir);
+        for (const entry of entries) {
+          if (entry.name?.endsWith(".json")) {
+            const nodePath = await join(nodesDir, entry.name);
+            await loadNode(nodePath, s.nodeService);
+          }
+        }
+      }
+
+      const edgesDir = await join(path, "edges");
+      if (await exists(edgesDir)) {
+        const entries = await readDir(edgesDir);
+        for (const entry of entries) {
+          if (entry.name?.endsWith(".json")) {
+            const edgePath = await join(edgesDir, entry.name);
+            try {
+              const edgeData = await readJSON(edgePath);
+              s.edgeService.setEdge(edgeData);
+            } catch {}
+          }
+        }
+      }
+
+      const graphsDir = await join(path, "graphs");
+      if (await exists(graphsDir)) {
+        const entries = await readDir(graphsDir);
+        for (const entry of entries) {
+          if (entry.name?.endsWith(".json")) {
+            const graphPath = await join(graphsDir, entry.name);
+            await loadGraph(graphPath, s.graphService);
+          }
+        }
+      }
+
+      const rootGraph = s.graphService.getGraph(manifest.rootGraphId);
+      if (rootGraph) {
+        s.navigationService.reset(rootGraph.id);
+        setCurrentGraph(rootGraph);
+        navStore.setCurrentGraphId(rootGraph.id);
+        navStore.setBreadcrumbs([{ graphId: rootGraph.id, graphName: rootGraph.name }]);
+      }
+
+      setWorkspaceName(manifest.name);
+      setView("workspace");
+      setShowOpenDialog(false);
+    },
+    [navStore],
+  );
+
+  const handleUndo = useCallback(() => {
+    const s = servicesRef.current;
+    if (!s) return;
+    s.commandHistoryService.undo();
+    const graph = s.graphService.getGraph(s.navigationService.getCurrentGraphId() ?? "");
+    if (graph) {
+      setCurrentGraph({ ...graph });
+    }
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    const s = servicesRef.current;
+    if (!s) return;
+    s.commandHistoryService.redo();
+    const graph = s.graphService.getGraph(s.navigationService.getCurrentGraphId() ?? "");
+    if (graph) {
+      setCurrentGraph({ ...graph });
+    }
+  }, []);
+
+  const handleNavigateBreadcrumb = useCallback(
+    (index: number) => {
+      const s = servicesRef.current;
+      if (!s) return;
+      s.navigationService.navigateToBreadcrumb(index);
+    },
+    [],
+  );
+
+  const handleCreateNode = useCallback(() => {
+    const s = servicesRef.current;
+    if (!s) return;
+    const graphId = s.navigationService.getCurrentGraphId();
+    if (!graphId) return;
+    const cmd = new CreateNodeCommand(graphId, "New Concept");
+    s.commandHistoryService.execute(cmd);
+    const graph = s.graphService.getGraph(graphId);
+    if (graph) setCurrentGraph({ ...graph });
+  }, []);
+
+  const shortcuts = useMemo(
+    () => ({
+      "ctrl+z": handleUndo,
+      "ctrl+shift+z": handleRedo,
+      "ctrl+n": handleCreateNode,
+      "ctrl+shift+p": () => uiStore.openCommandPalette(),
+      escape: () => {
+        if (uiStore.commandPaletteOpen) uiStore.closeCommandPalette();
+      },
+    }),
+    [handleUndo, handleRedo, handleCreateNode, uiStore],
+  );
+
+  useKeyboardShortcuts(shortcuts);
+
+  const s = servicesRef.current;
+
+  const handleCreateEdge = useCallback(
+    async (relationshipId: any, customLabel?: string) => {
+      const s = servicesRef.current;
+      if (!s) return;
+      const dialog = uiStore.createEdgeDialog;
+      if (!dialog.sourceId || !dialog.targetId) return;
+      const cmd = new CreateEdgeCommand(
+        s.navigationService.getCurrentGraphId() ?? "",
+        dialog.sourceId,
+        dialog.targetId,
+        relationshipId,
+        customLabel,
+      );
+      await s.commandHistoryService.execute(cmd);
+      const graph = s.graphService.getGraph(s.navigationService.getCurrentGraphId() ?? "");
+      if (graph) setCurrentGraph({ ...graph });
+      uiStore.closeCreateEdgeDialog();
+    },
+    [uiStore],
+  );
+
+  const recents = s?.workspaceService.getRecents() ?? [];
+
+  if (view === "welcome") {
+    return (
+      <>
+        <WelcomeScreen
+          recents={recents}
+          onCreateWorkspace={() => setShowCreateDialog(true)}
+          onOpenWorkspace={() => setShowOpenDialog(true)}
+          onOpenRecent={handleOpenWorkspace}
+        />
+        {showCreateDialog && (
+          <CreateWorkspaceDialog
+            onConfirm={handleCreateWorkspace}
+            onCancel={() => setShowCreateDialog(false)}
+          />
+        )}
+        {showOpenDialog && (
+          <OpenWorkspaceDialog
+            onConfirm={handleOpenWorkspace}
+            onCancel={() => setShowOpenDialog(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  if (!s || !currentGraph) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-[#13131a] text-white/50">
+        Loading...
+      </div>
+    );
+  }
+
+  const graphId = currentGraph.id;
+  const sourceNodeName =
+    uiStore.createEdgeDialog.sourceId && s.nodeService.getNode(uiStore.createEdgeDialog.sourceId)?.label;
+  const targetNodeName =
+    uiStore.createEdgeDialog.targetId && s.nodeService.getNode(uiStore.createEdgeDialog.targetId)?.label;
+
+  const issues = graphStore.validationIssues;
 
   return (
     <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+      <AppShell
+        workspaceName={workspaceName}
+        breadcrumbs={navStore.breadcrumbs}
+        canUndo={s.commandHistoryService.canUndo()}
+        canRedo={s.commandHistoryService.canRedo()}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onNavigateBreadcrumb={handleNavigateBreadcrumb}
+        onOpenCommandPalette={() => uiStore.openCommandPalette()}
+        sidebar={
+          uiStore.relationshipInspectorOpen && uiStore.selectedEdgeId ? (
+            <RelationshipInspector
+              edgeId={uiStore.selectedEdgeId}
+              graphId={graphId}
+              edgeService={s.edgeService}
+              nodeService={s.nodeService}
+              commandHistoryService={s.commandHistoryService}
+              onClose={() => uiStore.closeRelationshipInspector()}
+            />
+          ) : undefined
+        }
+      >
+        <GraphCanvas
+          graph={currentGraph}
+          converterService={s.converterService}
+          commandHistoryService={s.commandHistoryService}
+          nodeService={s.nodeService}
+          graphService={s.graphService}
+          navigationService={s.navigationService}
+          edgeService={s.edgeService}
+          eventBus={s.eventBus}
+        />
+        <ValidationOverlay
+          issues={issues}
+          onDismiss={() => graphStore.setValidationIssues([])}
+        />
+      </AppShell>
 
-      <div className="ticks"></div>
+      {uiStore.createEdgeDialog.open && sourceNodeName !== undefined && targetNodeName !== undefined && (
+        <EdgeCreationDialog
+          sourceLabel={sourceNodeName ?? "?"}
+          targetLabel={targetNodeName ?? "?"}
+          onConfirm={handleCreateEdge}
+          onCancel={() => uiStore.closeCreateEdgeDialog()}
+        />
+      )}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
+      {uiStore.commandPaletteOpen && (
+        <CommandPalette
+          commands={[
+            { type: "create-node", label: "Create Concept Node", shortcut: "Ctrl+N" },
+            { type: "undo", label: "Undo", shortcut: "Ctrl+Z" },
+            { type: "redo", label: "Redo", shortcut: "Ctrl+Shift+Z" },
+          ]}
+          onExecute={(cmd) => {
+            if (cmd.type === "create-node") handleCreateNode();
+            if (cmd.type === "undo") handleUndo();
+            if (cmd.type === "redo") handleRedo();
+          }}
+          onClose={() => uiStore.closeCommandPalette()}
+        />
+      )}
     </>
-  )
+  );
 }
-
-export default App
