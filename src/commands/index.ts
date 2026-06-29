@@ -1,6 +1,7 @@
 export { CreateNodeCommand } from "./CreateNodeCommand";
 export { DeleteNodeCommand } from "./DeleteNodeCommand";
 export { MoveNodeCommand } from "./MoveNodeCommand";
+export { ResizeNodeCommand } from "./ResizeNodeCommand";
 export { UpdateNodeCommand } from "./UpdateNodeCommand";
 export { CreateEdgeCommand } from "./CreateEdgeCommand";
 export { DeleteEdgeCommand } from "./DeleteEdgeCommand";
