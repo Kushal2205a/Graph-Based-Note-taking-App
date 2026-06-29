@@ -14,11 +14,11 @@ export class UpdateNodeCommand implements Command {
     this.newData = { ...newData };
   }
 
-  execute(ctx: CommandContext): void {
-    ctx.nodeService.update(this.nodeId, this.newData);
+  async execute(ctx: CommandContext): Promise<void> {
+    await ctx.nodeService.update(this.nodeId, this.newData);
   }
 
-  undo(ctx: CommandContext): void {
-    ctx.nodeService.update(this.nodeId, this.oldData);
+  async undo(ctx: CommandContext): Promise<void> {
+    await ctx.nodeService.update(this.nodeId, this.oldData);
   }
 }
