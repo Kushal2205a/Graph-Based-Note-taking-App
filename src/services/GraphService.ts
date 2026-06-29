@@ -1,4 +1,4 @@
-import type { Graph, NodeView, EdgeView } from "../types";
+import type { Graph, NodeView, EdgeView, CanvasObject } from "../types";
 import { GRAPH_SCHEMA_VERSION } from "../types";
 import { generateId } from "../utils/idGenerator";
 import { readJSON, writeJSON, exists, remove } from "../utils/fileSystem";
@@ -35,6 +35,9 @@ export class GraphService {
       views: {
         nodeViews: {},
         edgeViews: {},
+      },
+      canvas: {
+        objects: [],
       },
     };
 
@@ -88,9 +91,20 @@ export class GraphService {
   }
 
   removeNodeId(graphId: string, nodeId: string): void {
+
     const graph = this.graphs.get(graphId);
     if (!graph) return;
+    console.log(
+      "Removing",
+      nodeId,
+      "from",
+      graphId
+    );
+
+    console.log("Before", graph.nodeIds);
+
     graph.nodeIds = graph.nodeIds.filter((id) => id !== nodeId);
+    console.log("After", graph.nodeIds);
     delete graph.views.nodeViews[nodeId];
   }
 
@@ -125,6 +139,27 @@ export class GraphService {
     const view = graph.views.edgeViews[edgeId];
     if (view) {
       Object.assign(view, changes);
+    }
+  }
+
+  addCanvasObject(graphId: string, obj: CanvasObject): void {
+    const graph = this.graphs.get(graphId);
+    if (!graph) throw new Error(`Graph ${graphId} not found`);
+    graph.canvas.objects.push(obj);
+  }
+
+  removeCanvasObject(graphId: string, objectId: string): void {
+    const graph = this.graphs.get(graphId);
+    if (!graph) return;
+    graph.canvas.objects = graph.canvas.objects.filter((o) => o.id !== objectId);
+  }
+
+  updateCanvasObject(graphId: string, objectId: string, changes: Partial<CanvasObject>): void {
+    const graph = this.graphs.get(graphId);
+    if (!graph) return;
+    const obj = graph.canvas.objects.find((o) => o.id === objectId);
+    if (obj) {
+      Object.assign(obj, changes);
     }
   }
 
