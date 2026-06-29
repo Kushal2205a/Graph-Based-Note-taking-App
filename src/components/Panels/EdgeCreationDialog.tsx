@@ -23,15 +23,15 @@ export default function EdgeCreationDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-[#1e1e2e] border border-white/10 rounded-xl p-6 w-full max-w-sm shadow-2xl">
-        <h3 className="text-sm font-medium text-white/80 mb-3">Create Relationship</h3>
+      <div className="rounded-xl p-6 w-full max-w-sm shadow-2xl" style={{ background: "var(--app-surface)", border: "1px solid var(--app-border)" }}>
+        <h3 className="text-sm font-medium mb-3" style={{ color: "var(--app-text)" }}>Create Relationship</h3>
 
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 text-sm mb-4">
-          <span className="text-white/80">{sourceLabel}</span>
-          <span className="text-white/30 text-xs">──</span>
-          <span className="text-blue-400">?</span>
-          <span className="text-white/30 text-xs">──➤</span>
-          <span className="text-white/80">{targetLabel}</span>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm mb-4" style={{ background: "var(--app-surface-2)" }}>
+          <span style={{ color: "var(--app-text)" }}>{sourceLabel}</span>
+          <span className="text-xs" style={{ color: "var(--app-muted)" }}>──</span>
+          <span style={{ color: "var(--app-accent)" }}>?</span>
+          <span className="text-xs" style={{ color: "var(--app-muted)" }}>──➤</span>
+          <span style={{ color: "var(--app-text)" }}>{targetLabel}</span>
         </div>
 
         <div className="space-y-1 max-h-48 overflow-y-auto mb-4">
@@ -39,14 +39,11 @@ export default function EdgeCreationDialog({
             <button
               key={rel.id}
               onClick={() => setSelectedId(rel.id)}
-              className={`
-                w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors text-left
-                ${
-                  selectedId === rel.id
-                    ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
-                    : "text-white/60 hover:text-white/80 hover:bg-white/5"
-                }
-              `}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors text-left hover:bg-white/5"
+              style={{
+                background: selectedId === rel.id ? "var(--app-surface-2)" : undefined,
+                color: selectedId === rel.id ? "var(--app-text)" : "var(--app-muted)",
+              }}
             >
               <div
                 className="w-2 h-2 rounded-full flex-shrink-0"
@@ -59,12 +56,13 @@ export default function EdgeCreationDialog({
 
         {selectedId === "custom" && (
           <div className="mb-4">
-            <label className="block text-xs text-white/50 mb-1">Custom Label</label>
+            <label className="block text-xs mb-1" style={{ color: "var(--app-muted)" }}>Custom Label</label>
             <input
               type="text"
               value={customLabel}
               onChange={(e) => setCustomLabel(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-[#13131a] border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500/50"
+              className="w-full px-3 py-2 rounded-xl text-sm focus:outline-none transition-colors"
+              style={{ background: "var(--app-surface-2)", border: "1px solid var(--app-border)", color: "var(--app-text)" }}
               placeholder="e.g., trains"
             />
           </div>
@@ -73,13 +71,15 @@ export default function EdgeCreationDialog({
         <div className="flex justify-end gap-3">
           <button
             onClick={onCancel}
-            className="px-4 py-2 rounded-lg text-white/60 hover:text-white/80 transition-colors text-sm"
+            className="px-4 py-2 rounded-lg text-sm transition-colors hover:bg-white/5"
+            style={{ color: "var(--app-muted)" }}
           >
             Cancel
           </button>
           <button
             onClick={handleConfirm}
-            className="px-4 py-2 rounded-lg bg-blue-500 text-white text-sm hover:bg-blue-600 transition-colors"
+            className="px-4 py-2 rounded-lg text-sm transition-colors hover:bg-white/15"
+            style={{ background: "var(--app-surface-2)", border: "1px solid var(--app-border)", color: "var(--app-text)" }}
           >
             Create
           </button>
