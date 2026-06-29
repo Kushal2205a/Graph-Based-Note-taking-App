@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
+import { Eye, Pencil } from "lucide-react";
 import Header from "./Header";
 import type { Breadcrumb } from "../../types";
+import type { CanvasTool } from "../../stores/useUIStore";
+import { useUIStore } from "../../stores/useUIStore";
 
 interface AppShellProps {
   workspaceName: string;
@@ -11,6 +14,10 @@ interface AppShellProps {
   onRedo: () => void;
   onNavigateBreadcrumb: (index: number) => void;
   onOpenCommandPalette: () => void;
+  onAddNode: () => void;
+  onGoHome?: () => void;
+  currentTool?: CanvasTool;
+  onToolChange?: (tool: CanvasTool) => void;
   children: ReactNode;
   sidebar?: ReactNode;
 }
@@ -24,11 +31,19 @@ export default function AppShell({
   onRedo,
   onNavigateBreadcrumb,
   onOpenCommandPalette,
+  onAddNode,
+  onGoHome,
+  currentTool,
+  onToolChange,
   children,
   sidebar,
 }: AppShellProps) {
+  const contentMode = useUIStore((s) => s.contentMode);
+  const toggleContentMode = useUIStore((s) => s.toggleContentMode);
+  const themeMode = useUIStore((s) => s.themeMode);
+
   return (
-    <div className="w-full h-full flex flex-col bg-[#13131a] text-white">
+    <div className="w-full h-full flex flex-col text-white" data-theme={themeMode} style={{ background: "var(--app-bg)", color: "var(--app-text)" }}>
       <Header
         workspaceName={workspaceName}
         breadcrumbs={breadcrumbs}
@@ -38,15 +53,28 @@ export default function AppShell({
         onRedo={onRedo}
         onNavigateBreadcrumb={onNavigateBreadcrumb}
         onOpenCommandPalette={onOpenCommandPalette}
+        onAddNode={onAddNode}
+        onGoHome={onGoHome}
+        currentTool={currentTool}
+        onToolChange={onToolChange}
       />
       <div className="flex-1 flex overflow-hidden">
         {sidebar && (
-          <aside className="w-72 border-r border-white/5 bg-[#181825] overflow-y-auto">
+          <aside className="w-72 border-r overflow-y-auto" style={{ background: "var(--app-surface)", borderColor: "var(--app-border)" }}>
             {sidebar}
           </aside>
         )}
         <main className="flex-1 relative overflow-hidden">
           {children}
+          <button
+            type="button"
+            className="absolute right-4 top-1/2 z-40 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border shadow-xl backdrop-blur transition-all duration-150 hover:scale-105"
+            style={{ background: "var(--app-panel)", borderColor: "var(--app-border)", color: "var(--app-muted)" }}
+            title={contentMode === "edit" ? "Switch to view mode" : "Switch to edit mode"}
+            onClick={toggleContentMode}
+          >
+            {contentMode === "edit" ? <Eye className="h-5 w-5" /> : <Pencil className="h-5 w-5" />}
+          </button>
         </main>
       </div>
     </div>
