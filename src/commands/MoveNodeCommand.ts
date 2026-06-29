@@ -23,9 +23,11 @@ export class MoveNodeCommand implements Command {
 
   execute(ctx: CommandContext): void {
     ctx.nodeService.updateView(this.graphId, this.nodeId, { position: this.newPosition });
+    ctx.graphService.updateNodeView(this.graphId, this.nodeId, { position: this.newPosition }); // ADD
   }
 
   undo(ctx: CommandContext): void {
     ctx.nodeService.updateView(this.graphId, this.nodeId, { position: this.oldPosition });
+    ctx.graphService.updateNodeView(this.graphId, this.nodeId, { position: this.oldPosition }); // ADD
   }
 }
