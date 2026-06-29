@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -6,40 +6,106 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   type Connection,
   ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import ConceptNode from "./ConceptNode";
 import CustomEdge from "./CustomEdge";
+import { BUILTIN_RELATIONSHIPS } from "../../constants/relationships";
 import { useUIStore } from "../../stores/useUIStore";
+import { GraphCallbacksProvider } from "./GraphCallbacks";
+import { CanvasRenderer } from "../Canvas/CanvasRenderer";
+import { CanvasOverlay } from "../Canvas/CanvasOverlay";
 import { MoveNodeCommand } from "../../commands/MoveNodeCommand";
+import { CreateCanvasObjectCommand, UpdateCanvasObjectCommand, DeleteCanvasObjectCommand } from "../../commands/CanvasCommands";
 import { DeleteEdgeCommand } from "../../commands/DeleteEdgeCommand";
 import type { ConverterService } from "../../services/ConverterService";
 import type { CommandHistoryService } from "../../services/CommandHistoryService";
-import type { GraphService } from "../../services/GraphService";
-import type { NavigationService } from "../../services/NavigationService";
-import type { Graph } from "../../types";
+import type { Graph, CanvasObject, DragOverride, NodeContentDocument } from "../../types";
+import { DEFAULT_CANVAS_STYLE } from "../../types";
 
 const nodeTypes = { concept: ConceptNode };
 const edgeTypes = { "custom-edge": CustomEdge };
+const EDGE_MARKER_REF_X = 0.5;
+
+function hitTestCanvasObject(pos: { x: number; y: number }, obj: CanvasObject): boolean {
+  if (obj.type === "ellipse") {
+    const cx = obj.x + obj.width / 2;
+    const cy = obj.y + obj.height / 2;
+    const rx = Math.max(1, obj.width / 2);
+    const ry = Math.max(1, obj.height / 2);
+    return ((pos.x - cx) ** 2) / (rx ** 2) + ((pos.y - cy) ** 2) / (ry ** 2) <= 1;
+  }
+  return pos.x >= obj.x && pos.x <= obj.x + obj.width && pos.y >= obj.y && pos.y <= obj.y + obj.height;
+}
+
+function getFlowNodeCenter(node: any, positionOverride?: { x: number; y: number }): { x: number; y: number } | null {
+  const position = positionOverride ?? node.positionAbsolute ?? node.position;
+  if (!position) return null;
+
+  const width = node.measured?.width ?? node.width ?? (typeof node.data?.width === "number" ? node.data.width : 160);
+  const height = node.measured?.height ?? node.height ?? (typeof node.data?.height === "number" ? node.data.height : 56);
+  return {
+    x: position.x + width / 2,
+    y: position.y + height / 2,
+  };
+}
+
+function getCoveredNodeIds(obj: CanvasObject, flowNodes: any[]): string[] {
+  return flowNodes
+    .filter((node) => {
+      const center = getFlowNodeCenter(node);
+      return center ? hitTestCanvasObject(center, obj) : false;
+    })
+    .map((node) => node.id);
+}
+
+/** Returns IDs of other canvas objects whose centre falls inside `obj`. */
+function getCoveredCanvasObjects(obj: CanvasObject, canvasObjects: CanvasObject[]): string[] {
+  return canvasObjects
+    .filter((other) => {
+      if (other.id === obj.id) return false;
+      const cx = other.x + other.width / 2;
+      const cy = other.y + other.height / 2;
+      return hitTestCanvasObject({ x: cx, y: cy }, obj);
+    })
+    .map((other) => other.id);
+}
 
 interface GraphCanvasInnerProps {
   graph: Graph;
   converterService: ConverterService;
   commandHistoryService: CommandHistoryService;
-  graphService: GraphService;
-  navigationService: NavigationService;
+  onRenameNode: (nodeId: string, newLabel: string) => void;
+  onAddNodeContent: (nodeId: string) => void;
+  onUpdateNodeContent: (nodeId: string, content: NodeContentDocument) => void;
+  onResizeNode: (nodeId: string, width: number, height: number) => void;
+  onOpenNodeGraph: (nodeId: string) => void;
+  onDeleteNode: (nodeId: string) => void;
 }
 
 function GraphCanvasInner({
   graph,
   converterService,
   commandHistoryService,
-  navigationService,
+  onRenameNode,
+  onAddNodeContent,
+  onUpdateNodeContent,
+  onResizeNode,
+  onOpenNodeGraph,
+  onDeleteNode,
 }: GraphCanvasInnerProps) {
   const openCreateEdgeDialog = useUIStore((s) => s.openCreateEdgeDialog);
   const openRelationshipInspector = useUIStore((s) => s.openRelationshipInspector);
+  const currentTool = useUIStore((s) => s.currentTool);
+  const selectedCanvasObjectId = useUIStore((s) => s.selectedCanvasObjectId);
+  const setSelectedCanvasObjectId = useUIStore((s) => s.setSelectedCanvasObjectId);
+  const drawingState = useUIStore((s) => s.drawingState);
+  const setCurrentTool = useUIStore((s) => s.setCurrentTool);
+  const setDrawingState = useUIStore((s) => s.setDrawingState);
+  const { screenToFlowPosition, getNodes } = useReactFlow();
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => converterService.toReactFlow(graph),
@@ -55,37 +121,86 @@ function GraphCanvasInner({
     setEdges(newEdges);
   }, [graph, converterService, setNodes, setEdges]);
 
+  // --- Canvas drag overrides for real-time rendering ---
+  const dragOverridesRef = useRef<Map<string, DragOverride>>(new Map());
+  const groupedDragStartRef = useRef<{
+    objectId: string;
+    nodePositions: Map<string, { x: number; y: number }>;
+    objectPositions: Map<string, { x: number; y: number }>;
+  } | null>(null);
+  const [tick, setTick] = useState(0);
+  const forceRender = useCallback(() => setTick((t) => t + 1), []);
+
+  // --- Canvas object selection via ReactFlow onPointerDown ---
+  const onPointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      if (currentTool !== "select") return;
+      const target = event.target as HTMLElement;
+      if (target.closest(".react-flow__node, .react-flow__edge")) return;
+
+      const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+
+      for (let i = graph.canvas.objects.length - 1; i >= 0; i--) {
+        const obj = graph.canvas.objects[i];
+        if (hitTestCanvasObject(pos, obj)) {
+          setSelectedCanvasObjectId(obj.id);
+          event.preventDefault();
+          return;
+        }
+      }
+
+      setSelectedCanvasObjectId(null);
+    },
+    [currentTool, graph.canvas.objects, screenToFlowPosition, setSelectedCanvasObjectId],
+  );
+
+  // --- Node drag handling ---
   const onNodesChangeWrapper = useCallback(
     (changes: any) => {
       for (const change of changes) {
         if (change.type === "position" && change.dragging === false) {
           const node = nodes.find((n: any) => n.id === change.id);
-          if (node && change.position) {
-            commandHistoryService.execute(
-              new MoveNodeCommand(
-                graph.id,
-                (node.data as any).nodeId,
-                { x: node.position.x, y: node.position.y },
-                change.position,
-              ),
-            );
-          }
+          if (!node || !change.position) continue;
+          void (async () => {
+            const nId = node.data?.nodeId as string | undefined;
+            if (nId) {
+              await commandHistoryService.execute(
+                new MoveNodeCommand(graph.id, nId, { x: node.position.x, y: node.position.y }, change.position),
+              );
+            }
+
+            const movedCenter = getFlowNodeCenter(node, change.position);
+            if (!movedCenter) return;
+
+            for (const obj of graph.canvas.objects) {
+              const groupedIds = (obj.properties?.groupedNodeIds as string[] | undefined) ?? [];
+              if (!groupedIds.includes(change.id) || hitTestCanvasObject(movedCenter, obj)) continue;
+
+              await commandHistoryService.execute(
+                new UpdateCanvasObjectCommand(graph.id, obj.id, {
+                  properties: {
+                    ...obj.properties,
+                    groupedNodeIds: groupedIds.filter((id) => id !== change.id),
+                  },
+                }),
+              );
+            }
+          })();
         }
       }
       onNodesChange(changes);
     },
-    [graph.id, nodes, commandHistoryService, onNodesChange],
+    [graph.id, graph.canvas.objects, nodes, commandHistoryService, onNodesChange],
   );
 
+  // --- Edge handling ---
   const onEdgesChangeWrapper = useCallback(
     (changes: any) => {
       for (const change of changes) {
         if (change.type === "remove") {
           const edge = edges.find((e: any) => e.id === change.id);
           if (edge?.data?.edgeId) {
-            commandHistoryService.execute(
-              new DeleteEdgeCommand(graph.id, (edge.data as any).edgeId),
-            );
+            commandHistoryService.execute(new DeleteEdgeCommand(graph.id, (edge.data as any).edgeId));
           }
         }
       }
@@ -97,7 +212,7 @@ function GraphCanvasInner({
   const onConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
-      openCreateEdgeDialog(connection.source, connection.target);
+      openCreateEdgeDialog(connection.source, connection.target, connection.sourceHandle, connection.targetHandle);
     },
     [openCreateEdgeDialog],
   );
@@ -105,11 +220,11 @@ function GraphCanvasInner({
   const onNodeDoubleClick = useCallback(
     (_event: any, node: any) => {
       const data = node.data as any;
-      if (data.childGraphId) {
-        navigationService.navigateToGraph(data.childGraphId, data.nodeId);
+      if (data.nodeId) {
+        onOpenNodeGraph(data.nodeId);
       }
     },
-    [navigationService],
+    [onOpenNodeGraph],
   );
 
   const onEdgeClick = useCallback(
@@ -121,8 +236,252 @@ function GraphCanvasInner({
     [openRelationshipInspector],
   );
 
+  // --- Canvas command helpers ---
+  const executeCmd = useCallback(
+    async (cmd: any) => {
+      await commandHistoryService.execute(cmd);
+    },
+    [commandHistoryService],
+  );
+
+  const handleCreateObject = useCallback(
+    (x: number, y: number, w: number, h: number) => {
+      const id = crypto.randomUUID();
+      const type = currentTool === "ellipse" ? "ellipse" : currentTool === "rounded-rectangle" ? "rounded-rectangle" : "rectangle";
+      const obj: CanvasObject = {
+        id,
+        type,
+        x,
+        y,
+        width: w,
+        height: h,
+        zIndex: graph.canvas.objects.length,
+        style: { ...DEFAULT_CANVAS_STYLE, borderRadius: type === "rounded-rectangle" ? 8 : 0 },
+      };
+      executeCmd(new CreateCanvasObjectCommand(graph.id, obj));
+    },
+    [graph.id, graph.canvas.objects.length, currentTool, executeCmd],
+  );
+
+  const handleCommitMove = useCallback(
+    async (id: string, x: number, y: number) => {
+      const shape = graph.canvas.objects.find((o) => o.id === id);
+      const oldX = shape?.x ?? 0;
+      const oldY = shape?.y ?? 0;
+      const groupedIds = shape?.properties?.groupedNodeIds as string[] | undefined;
+      const groupedObjectIds = shape?.properties?.groupedObjectIds as string[] | undefined;
+      const dragStart = groupedDragStartRef.current?.objectId === id ? groupedDragStartRef.current : null;
+
+      await executeCmd(new UpdateCanvasObjectCommand(graph.id, id, { x, y }));
+      const dx = x - oldX;
+      const dy = y - oldY;
+      if (dx === 0 && dy === 0) {
+        groupedDragStartRef.current = null;
+        return;
+      }
+
+      // Move direct child nodes
+      if (groupedIds && groupedIds.length > 0) {
+        const finalPositions = new Map<string, { x: number; y: number }>();
+        for (const nodeId of groupedIds) {
+          const node = nodes.find((n) => n.id === nodeId);
+          const oldPos = dragStart?.nodePositions.get(nodeId) ?? (node ? { x: node.position.x - dx, y: node.position.y - dy } : null);
+          if (!oldPos) continue;
+          const newPos = { x: oldPos.x + dx, y: oldPos.y + dy };
+          finalPositions.set(nodeId, newPos);
+          await commandHistoryService.execute(new MoveNodeCommand(graph.id, nodeId, oldPos, newPos));
+        }
+        setNodes((nds) =>
+          nds.map((node) => {
+            const position = finalPositions.get(node.id);
+            return position ? { ...node, position } : node;
+          }),
+        );
+      }
+
+      // Move inner canvas groups — clear their preview overrides first, then persist
+      if (groupedObjectIds && groupedObjectIds.length > 0) {
+        for (const objId of groupedObjectIds) {
+          const innerObj = graph.canvas.objects.find((o) => o.id === objId);
+          if (!innerObj) continue;
+          dragOverridesRef.current.delete(objId);
+          await executeCmd(new UpdateCanvasObjectCommand(graph.id, objId, {
+            x: innerObj.x + dx,
+            y: innerObj.y + dy,
+          }));
+        }
+      }
+
+      groupedDragStartRef.current = null;
+    },
+    [graph, executeCmd, commandHistoryService, setNodes, nodes, dragOverridesRef],
+  );
+
+  const handlePreviewMove = useCallback(
+    (id: string, x: number, y: number) => {
+      const shape = graph.canvas.objects.find((o) => o.id === id);
+      const groupedIds = shape?.properties?.groupedNodeIds as string[] | undefined;
+      const groupedObjectIds = shape?.properties?.groupedObjectIds as string[] | undefined;
+      if (!shape) return;
+      if ((!groupedIds || groupedIds.length === 0) && (!groupedObjectIds || groupedObjectIds.length === 0)) return;
+
+      const dx = x - shape.x;
+      const dy = y - shape.y;
+
+      if (groupedDragStartRef.current?.objectId !== id) {
+        groupedDragStartRef.current = {
+          objectId: id,
+          nodePositions: new Map(
+            nodes
+              .filter((node) => groupedIds?.includes(node.id))
+              .map((node) => [node.id, { x: node.position.x, y: node.position.y }]),
+          ),
+          objectPositions: new Map(
+            (groupedObjectIds ?? []).flatMap((objId) => {
+              const inner = graph.canvas.objects.find((o) => o.id === objId);
+              return inner ? [[objId, { x: inner.x, y: inner.y }] as [string, { x: number; y: number }]] : [];
+            }),
+          ),
+        };
+      }
+
+      const { nodePositions, objectPositions } = groupedDragStartRef.current;
+
+      // Preview-move direct child nodes
+      setNodes((nds) =>
+        nds.map((node) => {
+          const start = nodePositions.get(node.id);
+          return start ? { ...node, position: { x: start.x + dx, y: start.y + dy } } : node;
+        }),
+      );
+
+      // Preview-move inner canvas groups (updates CanvasRenderer via dragOverridesRef)
+      for (const [objId, startPos] of objectPositions) {
+        dragOverridesRef.current.set(objId, { x: startPos.x + dx, y: startPos.y + dy });
+      }
+    },
+    [graph.canvas.objects, nodes, setNodes, dragOverridesRef],
+  );
+
+  const handleCommitResize = useCallback(
+    async (id: string, x: number, y: number, w: number, h: number) => {
+      const obj = graph.canvas.objects.find((o) => o.id === id);
+      const groupedIds = (obj?.properties?.groupedNodeIds as string[] | undefined) ?? [];
+      const groupedObjectIds = (obj?.properties?.groupedObjectIds as string[] | undefined) ?? [];
+      const changes: Record<string, unknown> = { x, y, width: w, height: h };
+
+      if (obj && (groupedIds.length > 0 || groupedObjectIds.length > 0)) {
+        const resizedObj: CanvasObject = { ...obj, x, y, width: w, height: h };
+        changes.properties = {
+          ...obj.properties,
+          groupedNodeIds: getCoveredNodeIds(resizedObj, getNodes()),
+          groupedObjectIds: getCoveredCanvasObjects(resizedObj, graph.canvas.objects),
+        };
+      }
+
+      await executeCmd(new UpdateCanvasObjectCommand(graph.id, id, changes));
+    },
+    [graph.id, graph.canvas.objects, executeCmd, getNodes],
+  );
+
+  const handleDeleteObject = useCallback(
+    async (id: string) => {
+      setSelectedCanvasObjectId(null);
+      await executeCmd(new DeleteCanvasObjectCommand(graph.id, id));
+    },
+    [graph.id, executeCmd, setSelectedCanvasObjectId],
+  );
+
+  const handleEditText = useCallback(
+    async (id: string) => {
+      const obj = graph.canvas.objects.find((o) => o.id === id);
+      if (!obj) return;
+      const newText = prompt("Edit text:", obj.text || "");
+      if (newText !== null) {
+        await executeCmd(new UpdateCanvasObjectCommand(graph.id, id, { text: newText || "" }));
+      }
+    },
+    [graph.id, graph.canvas.objects, executeCmd],
+  );
+
+  const handleGroupNodes = useCallback(
+    async (objectId: string) => {
+      const obj = graph.canvas.objects.find((o) => o.id === objectId);
+      if (!obj) return;
+
+      const existing = (obj.properties?.groupedNodeIds as string[] | undefined) ?? [];
+      const allNodes = getNodes();
+      const nodeIdsToGroup = getCoveredNodeIds(obj, allNodes);
+      const objectIdsToGroup = getCoveredCanvasObjects(obj, graph.canvas.objects);
+
+      if (existing.length > 0) {
+        await executeCmd(new UpdateCanvasObjectCommand(graph.id, objectId, {
+          properties: { ...obj.properties, groupedNodeIds: [], groupedObjectIds: [] },
+        }));
+      } else if (nodeIdsToGroup.length > 0 || objectIdsToGroup.length > 0) {
+        await executeCmd(new UpdateCanvasObjectCommand(graph.id, objectId, {
+          properties: { ...obj.properties, groupedNodeIds: nodeIdsToGroup, groupedObjectIds: objectIdsToGroup },
+        }));
+      }
+    },
+    [graph.id, graph.canvas.objects, executeCmd, getNodes],
+  );
+
+  const edgeMarkers = useMemo(() => (
+    <svg aria-hidden="true" style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}>
+      <defs>
+        {BUILTIN_RELATIONSHIPS.map((rel) => (
+          <marker
+            key={rel.id}
+            id={`edge-arrow-${rel.id}`}
+            viewBox="-10 -10 20 20"
+            refX={EDGE_MARKER_REF_X}
+            refY="0"
+            markerWidth="10"
+            markerHeight="10"
+            markerUnits="strokeWidth"
+            orient="auto"
+          >
+            <polyline
+              points="-5,-4 0,0 -5,4 -5,-4"
+              fill={rel.color}
+              stroke={rel.color}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </marker>
+        ))}
+      </defs>
+    </svg>
+  ), []);
+
+  const hasNodes = graph.nodeIds.length > 0;
+  const hasEdges = graph.edgeIds.length > 0;
+  const hasCanvasObjects = graph.canvas.objects.length > 0;
+  const isEmpty = !hasNodes && !hasEdges && !hasCanvasObjects;
+
   return (
-    <div className="w-full h-full">
+    <div className="w-full h-full relative" style={{ background: "var(--app-bg)" }}>
+      {edgeMarkers}
+      <CanvasRenderer
+        objects={graph.canvas.objects}
+        selectedId={selectedCanvasObjectId}
+        dragOverridesRef={dragOverridesRef}
+        tick={tick}
+      />
+      {isEmpty && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none">
+          <div className="bg-[#141414]/80 backdrop-blur-sm rounded-xl border border-white/10 px-8 py-6 text-center shadow-2xl">
+            <div className="text-4xl mb-3 opacity-30">⬡</div>
+            <h3 className="text-white/70 font-medium text-sm mb-1">This graph is empty</h3>
+            <p className="text-white/40 text-xs">
+              Press <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white/60 text-[11px] font-mono">Ctrl+N</kbd> or click{" "}
+              <span className="text-white/80">+ Add Node</span> to get started
+            </p>
+          </div>
+        </div>
+      )}
+      <GraphCallbacksProvider value={{ onRenameNode, onAddNodeContent, onUpdateNodeContent, onResizeNode, onDeleteNode }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -131,6 +490,8 @@ function GraphCanvasInner({
         onConnect={onConnect}
         onNodeDoubleClick={onNodeDoubleClick}
         onEdgeClick={onEdgeClick}
+        deleteKeyCode={null}
+        onPointerDown={onPointerDown}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
@@ -141,15 +502,35 @@ function GraphCanvasInner({
           animated: false,
         }}
       >
-        <Background color="#ffffff10" gap={20} />
-        <Controls className="!bg-[#1e1e2e] !border-white/10 !text-white" />
+        <Background color="var(--app-grid)" gap={18} size={1.4} />
+        <Controls />
         <MiniMap
-          className="!border-white/10"
-          style={{ backgroundColor: "#1e1e2e" }}
-          nodeColor="#3b82f6"
-          maskColor="#00000060"
+          pannable
+          zoomable
+          style={{ backgroundColor: "var(--app-surface)" }}
+          nodeColor="var(--app-accent)"
+          maskColor="rgba(0,0,0,0.35)"
         />
       </ReactFlow>
+      </GraphCallbacksProvider>
+      <CanvasOverlay
+        objects={graph.canvas.objects}
+        selectedId={selectedCanvasObjectId}
+        currentTool={currentTool}
+        drawingState={drawingState}
+        dragOverridesRef={dragOverridesRef}
+        onTick={forceRender}
+        onSelectObject={setSelectedCanvasObjectId}
+        onDrawingStateChange={setDrawingState}
+        onToolChange={setCurrentTool}
+        onCreateObject={handleCreateObject}
+        onPreviewMove={handlePreviewMove}
+        onCommitMove={handleCommitMove}
+        onCommitResize={handleCommitResize}
+        onDeleteObject={handleDeleteObject}
+        onEditText={handleEditText}
+        onGroupNodes={handleGroupNodes}
+      />
     </div>
   );
 }
