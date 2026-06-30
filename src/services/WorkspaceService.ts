@@ -118,6 +118,13 @@ export class WorkspaceService {
     localStorage.setItem(RECENTS_KEY, JSON.stringify(filtered.slice(0, 10)));
   }
 
+  removeRecent(path: string): RecentWorkspace[] {
+    const recents = this.getRecents();
+    const filtered = recents.filter((r) => r.path !== path);
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(filtered));
+    return filtered;
+  }
+
   async addGraphId(graphId: string): Promise<void> {
     if (!this.manifest) return;
     if (!this.manifest.graphIds.includes(graphId)) {

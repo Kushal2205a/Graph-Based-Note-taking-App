@@ -45,6 +45,7 @@ export default function App() {
   const [workspaceName, setWorkspaceName] = useState("Knowledge Graph");
   const [currentGraph, setCurrentGraph] = useState<Graph | null>(null);
   const [servicesReady, setServicesReady] = useState(false);
+  const [recentsVersion, setRecentsVersion] = useState(0);
 
   const servicesRef = useRef<{
     eventBus: EventBus;
@@ -449,6 +450,13 @@ export default function App() {
 
   const s = servicesRef.current;
   const recents = servicesReady && s ? s.workspaceService.getRecents() : [];
+  void recentsVersion; // forces re-evaluation of `recents` when bumped
+
+  const handleDeleteRecent = useCallback((path: string) => {
+    if (!s) return;
+    s.workspaceService.removeRecent(path);
+    setRecentsVersion((v) => v + 1);
+  }, [s]);
 
   if (view === "welcome") {
     return (
@@ -458,6 +466,7 @@ export default function App() {
           onCreateWorkspace={() => setShowCreateDialog(true)}
           onOpenWorkspace={() => setShowOpenDialog(true)}
           onOpenRecent={handleOpenWorkspace}
+          onDeleteRecent={handleDeleteRecent}
         />
         {showCreateDialog && (
           <CreateWorkspaceDialog

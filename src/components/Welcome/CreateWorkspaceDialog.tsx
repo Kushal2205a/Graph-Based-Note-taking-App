@@ -40,35 +40,38 @@ export default function CreateWorkspaceDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-[#1e1e2e] border border-white/10 rounded-xl p-6 w-full max-w-md shadow-2xl">
-        <h2 className="text-lg font-semibold text-white mb-4">Create Workspace</h2>
+      <div className="rounded-xl p-6 w-full max-w-md shadow-2xl" style={{ background: "var(--app-surface)", border: "1px solid var(--app-border)" }}>
+        <h2 className="text-lg font-semibold mb-4" style={{ color: "var(--app-text)" }}>Create Workspace</h2>
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm text-white/60 mb-1">Name</label>
+            <label className="block text-sm mb-1" style={{ color: "var(--app-muted)" }}>Name</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-[#13131a] border border-white/10 text-white text-sm focus:outline-none focus:border-white/20"
+              className="w-full px-3 py-2 rounded-xl text-sm focus:outline-none transition-colors"
+              style={{ background: "var(--app-surface-2)", border: "1px solid var(--app-border)", color: "var(--app-text)" }}
               placeholder="My Knowledge Graph"
               autoFocus
             />
           </div>
 
           <div>
-            <label className="block text-sm text-white/60 mb-1">Folder</label>
+            <label className="block text-sm mb-1" style={{ color: "var(--app-muted)" }}>Folder</label>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={folderPath ?? ""}
                 readOnly
-                className="flex-1 px-3 py-2 rounded-lg bg-[#13131a] border border-white/10 text-white/50 text-sm"
+                className="flex-1 px-3 py-2 rounded-xl text-sm"
+                style={{ background: "var(--app-surface-2)", border: "1px solid var(--app-border)", color: "var(--app-muted)" }}
                 placeholder="Select a folder..."
               />
               <button
                 onClick={handleBrowse}
-                className="px-4 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/20 transition-colors"
+                className="px-4 py-2 rounded-xl text-sm transition-colors hover:bg-white/10"
+                style={{ background: "var(--app-surface-2)", border: "1px solid var(--app-border)", color: "var(--app-text)" }}
               >
                 Browse
               </button>
@@ -81,13 +84,15 @@ export default function CreateWorkspaceDialog({
         <div className="flex justify-end gap-3 mt-6">
           <button
             onClick={onCancel}
-            className="px-4 py-2 rounded-lg text-white/60 hover:text-white/80 transition-colors text-sm"
+            className="px-4 py-2 rounded-lg text-sm transition-colors hover:bg-white/5"
+            style={{ color: "var(--app-muted)" }}
           >
             Cancel
           </button>
           <button
             onClick={handleConfirm}
-            className="px-4 py-2 rounded-lg bg-blue-500 text-white text-sm hover:bg-blue-600 transition-colors"
+            className="px-4 py-2 rounded-lg text-sm transition-colors hover:bg-white/15"
+            style={{ background: "var(--app-surface-2)", border: "1px solid var(--app-border)", color: "var(--app-text)" }}
           >
             Create
           </button>
