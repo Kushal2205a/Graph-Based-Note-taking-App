@@ -4,6 +4,7 @@ import { mergeRegister } from "@lexical/utils";
 import {
     $getSelection,
     $isRangeSelection,
+    $createParagraphNode,
     COMMAND_PRIORITY_CRITICAL,
     FORMAT_TEXT_COMMAND,
     SELECTION_CHANGE_COMMAND,
@@ -16,8 +17,11 @@ import {
     ListNode,
 } from "@lexical/list";
 import { $getNearestNodeOfType } from "@lexical/utils";
+import { $isCodeNode, $createCodeNode } from "@lexical/code";
+import { $setBlocksType } from "@lexical/selection";
 import {
     Bold,
+    Code2,
     ImagePlus,
     Italic,
     List,
@@ -39,6 +43,7 @@ export default function ToolbarPlugin({ onAddImage }: ToolbarPluginProps) {
     const [isStrikethrough, setIsStrikethrough] = useState(false);
     const [isBulletList, setIsBulletList] = useState(false);
     const [isNumberedList, setIsNumberedList] = useState(false);
+    const [isCode, setIsCode] = useState(false);
 
     const $updateToolbar = useCallback(() => {
         const selection = $getSelection();
@@ -59,6 +64,7 @@ export default function ToolbarPlugin({ onAddImage }: ToolbarPluginProps) {
             const listType = element.getListType();
             setIsBulletList(listType === "bullet");
             setIsNumberedList(listType === "number");
+            setIsCode(false);
         } else {
             const parentList = $getNearestNodeOfType(anchorNode, ListNode);
             if (parentList) {
@@ -69,6 +75,7 @@ export default function ToolbarPlugin({ onAddImage }: ToolbarPluginProps) {
                 setIsBulletList(false);
                 setIsNumberedList(false);
             }
+            setIsCode($isCodeNode(element));
         }
     }, []);
 
@@ -195,6 +202,26 @@ export default function ToolbarPlugin({ onAddImage }: ToolbarPluginProps) {
                 onClick={() => onAddImage?.()}
             >
                 <ImagePlus className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-white/15 mx-0.5" />
+
+            <button
+                className={`${btn} ${isCode ? active : ""}`}
+                title="Code block"
+                onClick={() =>
+                    editor.update(() => {
+                        const selection = $getSelection();
+                        if (!$isRangeSelection(selection)) return;
+                        $setBlocksType(selection, () =>
+                            isCode
+                                ? $createParagraphNode()
+                                : $createCodeNode("javascript")
+                        );
+                    })
+                }
+            >
+                <Code2 className="w-3.5 h-3.5" />
             </button>
         </div>
     );

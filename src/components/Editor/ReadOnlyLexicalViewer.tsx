@@ -5,7 +5,14 @@ import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { ListNode, ListItemNode } from "@lexical/list";
+import { CodeNode, CodeHighlightNode, registerCodeHighlighting } from "@lexical/code";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+
+function CodeHighlightPlugin() {
+    const [editor] = useLexicalComposerContext();
+    useEffect(() => registerCodeHighlighting(editor), [editor]);
+    return null;
+}
 
 // Shared with LexicalEditor.tsx — consider extracting to lexicalTheme.ts
 const theme = {
@@ -24,6 +31,39 @@ const theme = {
         nested: {
             listitem: "list-none",
         },
+    },
+    code: "font-mono text-xs bg-black/30 rounded p-2 my-1 block overflow-x-auto whitespace-pre",
+    codeHighlight: {
+        comment:        "text-[#5c6370] italic",
+        prolog:         "text-[#5c6370]",
+        doctype:        "text-[#5c6370]",
+        cdata:          "text-[#5c6370]",
+        keyword:        "text-[#c678dd]",
+        atrule:         "text-[#c678dd]",
+        important:      "text-[#c678dd]",
+        regex:          "text-[#c678dd]",
+        selector:       "text-[#98c379]",
+        string:         "text-[#98c379]",
+        char:           "text-[#98c379]",
+        inserted:       "text-[#98c379]",
+        "class-name":   "text-[#e5c07b]",
+        class:          "text-[#e5c07b]",
+        function:       "text-[#61afef]",
+        builtin:        "text-[#61afef]",
+        number:         "text-[#d19a66]",
+        boolean:        "text-[#d19a66]",
+        constant:       "text-[#d19a66]",
+        symbol:         "text-[#d19a66]",
+        deleted:        "text-[#e06c75]",
+        property:       "text-[#e06c75]",
+        tag:            "text-[#e06c75]",
+        namespace:      "text-[#e06c75]",
+        entity:         "text-[#e06c75]",
+        attr:           "text-[#e06c75]",
+        operator:       "text-[#56b6c2]",
+        url:            "text-[#56b6c2]",
+        variable:       "text-[#e06c75]",
+        punctuation:    "text-[#abb2bf]",
     },
 };
 
@@ -58,7 +98,7 @@ export default function ReadOnlyLexicalViewer({ editorState }: ReadOnlyLexicalVi
     const initialConfig = {
         namespace: "KnowledgeGraphViewer",
         theme,
-        nodes: [ListNode, ListItemNode],
+        nodes: [ListNode, ListItemNode, CodeNode, CodeHighlightNode],
         editable: false,          // no caret, no editing, no cursor blink
         onError(error: Error) {
             console.error("ReadOnlyLexicalViewer error:", error);
@@ -78,6 +118,7 @@ export default function ReadOnlyLexicalViewer({ editorState }: ReadOnlyLexicalVi
                 ErrorBoundary={LexicalErrorBoundary}
             />
             <ListPlugin />
+            <CodeHighlightPlugin />
             <LoadStatePlugin editorState={editorState} />
         </LexicalComposer>
     );

@@ -7,6 +7,16 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import LoadEditorStatePlugin from "./LoadEditorStatePlugin";
 import { ListPlugin } from "@lexical/react/LexicalListPlugin";
+import { ListNode, ListItemNode } from "@lexical/list";
+import { CodeNode, CodeHighlightNode, registerCodeHighlighting } from "@lexical/code";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { useEffect } from "react";
+
+function CodeHighlightPlugin() {
+    const [editor] = useLexicalComposerContext();
+    useEffect(() => registerCodeHighlighting(editor), [editor]);
+    return null;
+}
 
 const theme = {
     paragraph: "leading-6",
@@ -25,27 +35,55 @@ const theme = {
             listitem: "list-none",
         },
     },
+    code: "font-mono text-xs bg-black/30 rounded p-2 my-1 block overflow-x-auto whitespace-pre",
+    codeHighlight: {
+        comment:        "text-[#5c6370] italic",
+        prolog:         "text-[#5c6370]",
+        doctype:        "text-[#5c6370]",
+        cdata:          "text-[#5c6370]",
+        keyword:        "text-[#c678dd]",
+        atrule:         "text-[#c678dd]",
+        important:      "text-[#c678dd]",
+        regex:          "text-[#c678dd]",
+        selector:       "text-[#98c379]",
+        string:         "text-[#98c379]",
+        char:           "text-[#98c379]",
+        inserted:       "text-[#98c379]",
+        "class-name":   "text-[#e5c07b]",
+        class:          "text-[#e5c07b]",
+        function:       "text-[#61afef]",
+        builtin:        "text-[#61afef]",
+        number:         "text-[#d19a66]",
+        boolean:        "text-[#d19a66]",
+        constant:       "text-[#d19a66]",
+        symbol:         "text-[#d19a66]",
+        deleted:        "text-[#e06c75]",
+        property:       "text-[#e06c75]",
+        tag:            "text-[#e06c75]",
+        namespace:      "text-[#e06c75]",
+        entity:         "text-[#e06c75]",
+        attr:           "text-[#e06c75]",
+        operator:       "text-[#56b6c2]",
+        url:            "text-[#56b6c2]",
+        variable:       "text-[#e06c75]",
+        punctuation:    "text-[#abb2bf]",
+    },
 };
-
-
 
 function Placeholder() {
     return (
-        <div
-            className="absolute left-1 top-1 pointer-events-none text-xs opacity-40"
-        >
+        <div className="absolute left-1 top-1 pointer-events-none text-xs opacity-40">
             Start typing...
         </div>
     );
 }
-import { ListNode, ListItemNode } from "@lexical/list";
-
 
 interface LexicalEditorProps {
     initialState?: string;
     onChange?: (editorState: string) => void;
     onAddImage?: () => void;
 }
+
 export default function LexicalEditor({
     initialState,
     onChange,
@@ -57,54 +95,47 @@ export default function LexicalEditor({
         nodes: [
             ListNode,
             ListItemNode,
+            CodeNode,
+            CodeHighlightNode,
         ],
         onError(error: any) {
             throw error;
         },
     };
+
     return (
         <LexicalComposer initialConfig={initialConfig}>
-            <div
-                className="relative flex h-full flex-col nodrag nowheel"
-            >
-                <ToolbarPlugin
-                    onAddImage={onAddImage}
-                />
+            <div className="relative flex h-full flex-col nodrag nowheel">
+                <ToolbarPlugin onAddImage={onAddImage} />
                 <RichTextPlugin
                     contentEditable={
                         <ContentEditable
                             className="
-                                        nodrag
-                                        nowheel
-                                        flex-1
-                                        min-h-0
-                                        px-1
-                                        py-1
-                                        outline-none
-                                        text-xs
-                                        leading-5
-                                        cursor-text
-                                        overflow-y-auto
-                                       "
-                            style={{
-                                color: "var(--app-text)",
-                            }}
+                                nodrag
+                                nowheel
+                                flex-1
+                                min-h-0
+                                px-1
+                                py-1
+                                outline-none
+                                text-xs
+                                leading-5
+                                cursor-text
+                                overflow-y-auto
+                            "
+                            style={{ color: "var(--app-text)" }}
                         />
                     }
                     placeholder={<Placeholder />}
                     ErrorBoundary={LexicalErrorBoundary}
                 />
-
                 <HistoryPlugin />
                 <ListPlugin />
-                <LoadEditorStatePlugin
-                    editorState={initialState}
-                />
+                <CodeHighlightPlugin />
+                <LoadEditorStatePlugin editorState={initialState} />
                 <OnChangePlugin
                     onChange={(editorState) => {
-                        onChange?.(
-                            JSON.stringify(editorState)
-                        );
+                        onChange?.(JSON.stringify(editorState));
                     }}
                 />
             </div>
