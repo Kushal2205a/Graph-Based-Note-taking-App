@@ -26,6 +26,12 @@ interface ReactFlowEdge {
     displayLabel: string;
     description?: string;
     color?: string;
+    bundleId?: string;
+    bundleSize?: number;
+    isBundleLeader?: boolean;
+    bundleTargetIds?: string[];
+    bundleOriginX?: number;
+    bundleOriginY?: number;
   };
   label?: string;
   selected?: boolean;
@@ -93,6 +99,40 @@ export class ConverterService {
         },
         label: displayLabel,
       });
+    }
+
+    const edgeGroups = new Map<string, ReactFlowEdge[]>();
+    for (const edge of edges) {
+      const key = `${edge.source}:${edge.data!.relationshipType}`;
+      if (!edgeGroups.has(key)) edgeGroups.set(key, []);
+      edgeGroups.get(key)!.push(edge);
+    }
+
+    for (const [bundleId, group] of edgeGroups) {
+      if (group.length < 2) continue;
+
+      group.sort((a, b) => a.id.localeCompare(b.id));
+      const bundleSize = group.length;
+
+      const leader = group[0];
+      if (leader.data) {
+        leader.data.bundleId = bundleId;
+        leader.data.bundleSize = bundleSize;
+        leader.data.isBundleLeader = true;
+        leader.data.bundleTargetIds = group.map((e) => e.target);
+        leader.data.displayLabel = `${leader.data.displayLabel} [${bundleSize}]`;
+      }
+
+      for (let i = 1; i < group.length; i++) {
+        const edge = group[i];
+        if (edge.data) {
+          edge.data.bundleId = bundleId;
+          edge.data.bundleSize = bundleSize;
+          edge.data.isBundleLeader = false;
+          edge.data.displayLabel = "";
+        }
+        edge.label = "";
+      }
     }
 
     return { nodes, edges };

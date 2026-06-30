@@ -41,12 +41,18 @@ function hitTestCanvasObject(pos: { x: number; y: number }, obj: CanvasObject): 
   return pos.x >= obj.x && pos.x <= obj.x + obj.width && pos.y >= obj.y && pos.y <= obj.y + obj.height;
 }
 
+/** Single source of truth for a flow node's rendered width/height. */
+function getNodeDims(node: any): { width: number; height: number } {
+  const width = node.measured?.width ?? node.width ?? (typeof node.data?.width === "number" ? node.data.width : 160);
+  const height = node.measured?.height ?? node.height ?? (typeof node.data?.height === "number" ? node.data.height : 56);
+  return { width, height };
+}
+
 function getFlowNodeCenter(node: any, positionOverride?: { x: number; y: number }): { x: number; y: number } | null {
   const position = positionOverride ?? node.positionAbsolute ?? node.position;
   if (!position) return null;
 
-  const width = node.measured?.width ?? node.width ?? (typeof node.data?.width === "number" ? node.data.width : 160);
-  const height = node.measured?.height ?? node.height ?? (typeof node.data?.height === "number" ? node.data.height : 56);
+  const { width, height } = getNodeDims(node);
   return {
     x: position.x + width / 2,
     y: position.y + height / 2,
@@ -120,6 +126,89 @@ function GraphCanvasInner({
     setNodes(newNodes);
     setEdges(newEdges);
   }, [graph, converterService, setNodes, setEdges]);
+
+  // Derived edges with bundle origins computed from live node positions
+  const edgesWithOrigins = useMemo(() => {
+    return edges.map((edge: any) => {
+      if (!edge.data?.isBundleLeader || !edge.data?.bundleTargetIds?.length) return edge;
+
+      const sourceNode = nodes.find((n: any) => n.id === edge.source);
+      if (!sourceNode) return edge;
+
+      const { width: sw, height: sh } = getNodeDims(sourceNode);
+      const sx = sourceNode.position.x + sw / 2;
+      const sy = sourceNode.position.y + sh / 2;
+
+      let dx = 0, dy = 0, count = 0;
+      const targetCenters: { x: number; y: number }[] = [];
+
+      for (const targetId of edge.data.bundleTargetIds) {
+        const tn = nodes.find((n: any) => n.id === targetId);
+        if (!tn) continue;
+        const { width: tw, height: th } = getNodeDims(tn);
+        const tx = tn.position.x + tw / 2;
+        const ty = tn.position.y + th / 2;
+        targetCenters.push({ x: tx, y: ty });
+        dx += tx - sx;
+        dy += ty - sy;
+        count++;
+      }
+
+      if (count === 0) return edge;
+
+      const dirLen = Math.sqrt(dx * dx + dy * dy);
+      if (dirLen > 0) { dx /= dirLen; dy /= dirLen; }
+
+      // Compute perpendicular extents for vertical centering
+      let minPerp = Infinity, maxPerp = -Infinity;
+      if (dirLen > 0) {
+        for (const { x: tx, y: ty } of targetCenters) {
+          const perp = -(tx - sx) * dy + (ty - sy) * dx;
+          if (perp < minPerp) minPerp = perp;
+          if (perp > maxPerp) maxPerp = perp;
+        }
+      }
+
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      const borderDist = Math.min(
+        absX > 0.001 ? (sw / 2) / absX : Infinity,
+        absY > 0.001 ? (sh / 2) / absY : Infinity,
+      );
+
+      const hx = sx + dx * (isFinite(borderDist) ? borderDist : 0);
+      const hy = sy + dy * (isFinite(borderDist) ? borderDist : 0);
+
+      // Average target centroid
+      const avgTx = targetCenters.reduce((s, c) => s + c.x, 0) / count;
+      const avgTy = targetCenters.reduce((s, c) => s + c.y, 0) / count;
+
+      // Project the source-border→average-target vector onto the bundle direction.
+      // This is the along-axis distance the edges travel before reaching their centroid.
+      // Using the centroid (not minDist) means the forward position scales with the
+      // full bundle span, so the label tracks the visual fork regardless of whether
+      // the bundle is tall, diagonal, or has unevenly spaced targets.
+      const borderToAvgAlongAxis = (avgTx - hx) * dx + (avgTy - hy) * dy;
+
+      // Place the label ~30% of the way along the axis from source border to average
+      // target. For React Flow's bezier curves, this is where the paths are still
+      // traveling close together before diverging to their respective targets.
+      const FORK_RATIO = 0.30;
+      const MIN_FORWARD_PX = 28;
+      const forwardDist = Math.max(borderToAvgAlongAxis * FORK_RATIO, MIN_FORWARD_PX);
+
+      const perpMid = isFinite(minPerp) ? (minPerp + maxPerp) / 2 : 0;
+
+      return {
+        ...edge,
+        data: {
+          ...edge.data,
+          bundleOriginX: hx + dx * forwardDist + (-dy) * perpMid,
+          bundleOriginY: hy + dy * forwardDist + (dx) * perpMid,
+        },
+      };
+    });
+  }, [nodes, edges]);
 
   // --- Canvas drag overrides for real-time rendering ---
   const dragOverridesRef = useRef<Map<string, DragOverride>>(new Map());
@@ -484,7 +573,7 @@ function GraphCanvasInner({
       <GraphCallbacksProvider value={{ onRenameNode, onAddNodeContent, onUpdateNodeContent, onResizeNode, onDeleteNode }}>
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={edgesWithOrigins}
         onNodesChange={onNodesChangeWrapper}
         onEdgesChange={onEdgesChangeWrapper}
         onConnect={onConnect}
