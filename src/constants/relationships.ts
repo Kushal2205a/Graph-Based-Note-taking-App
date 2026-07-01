@@ -29,6 +29,19 @@ export function getRelationshipColor(relationship: { id: string }): string {
   return def?.color ?? "#6b7280";
 }
 
+/**
+ * Single source of truth for the relationship filter key format.
+ * Built-in relationships key by their id ("uses", "depends_on", ...).
+ * Custom relationships key by their free-text label ("custom:Bug",
+ * "custom:Security", ...), since every custom edge shares id "custom"
+ * but is meaningfully distinguished by customLabel.
+ */
+export function getFilterKey(relationship: { id: string; customLabel?: string }): string {
+  return relationship.id === "custom" && relationship.customLabel
+    ? `custom:${relationship.customLabel}`
+    : relationship.id;
+}
+
 export function getRelationshipDefinition(id: string): RelationshipDefinition | undefined {
   return BUILTIN_RELATIONSHIPS.find((r) => r.id === id);
 }

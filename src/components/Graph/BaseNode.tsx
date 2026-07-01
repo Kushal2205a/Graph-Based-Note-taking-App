@@ -3,7 +3,9 @@ import { createPortal } from "react-dom";
 import { Handle, NodeResizer, Position, type NodeProps } from "@xyflow/react";
 import { ChevronRight, X } from "lucide-react";
 import { useGraphCallbacks } from "./GraphCallbacks";
+import { useRelationshipIndex } from "../../constants/RelationshipIndexContext";
 import { useUIStore } from "../../stores/useUIStore";
+import { useFilterStore } from "../../stores/useFilterStore";
 import type { ImageContentBlock, NodeContentDocument } from "../../types";
 import type { RichTextContentBlock } from "../../types";
 import LexicalEditor from "../../components/Editor/LexicalEditor";
@@ -31,6 +33,24 @@ function BaseNode({ id, data, selected }: NodeProps) {
   const nodeContent = content as NodeContentDocument | undefined;
   const hasContent = !!nodeContent;
   const contentEditing = useUIStore((s) => s.contentMode === "edit");
+  const filterActive = useFilterStore((s) => s.active);
+  const selectedFilterKeys = useFilterStore((s) => s.selectedKeys);
+  const indexVersion = useFilterStore((s) => s.indexVersion); // cache-buster: bumped by RelationshipIndexService on every mutation
+  const relationshipIndex = useRelationshipIndex();
+
+  // True when this is a collapsed component node whose child graph (or any of
+  // its descendants) contains at least one edge matching the active filter.
+  // Memoised on indexVersion so it re-checks whenever the index mutates.
+  const subtreeHasMatch = useMemo(() => {
+    if (!filterActive || selectedFilterKeys.size === 0 || !childGraphId) return false;
+    if (!relationshipIndex) return false;
+    const subtreeKeys = relationshipIndex.getSubtreeTypes(childGraphId);
+    for (const key of subtreeKeys) {
+      if (selectedFilterKeys.has(key)) return true;
+    }
+    return false;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterActive, selectedFilterKeys, childGraphId, relationshipIndex, indexVersion]);
   const { onRenameNode, onAddNodeContent, onUpdateNodeContent, onResizeNode, onDeleteNode } = useGraphCallbacks();
 
   const saveTimeout = useRef<number | null>(null);
@@ -287,6 +307,13 @@ function BaseNode({ id, data, selected }: NodeProps) {
           )}
           {childGraphId && (
             <ChevronRight className="w-4 h-4 text-white/40 flex-shrink-0" />
+          )}
+          {subtreeHasMatch && (
+            <span
+              className="flex-shrink-0 w-2 h-2 rounded-full"
+              style={{ background: "var(--app-accent)" }}
+              title="Contains matching relationships in nested graph"
+            />
           )}
         </div>
 

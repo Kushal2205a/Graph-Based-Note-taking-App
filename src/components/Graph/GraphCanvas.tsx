@@ -13,8 +13,9 @@ import {
 import "@xyflow/react/dist/style.css";
 import ConceptNode from "./ConceptNode";
 import CustomEdge from "./CustomEdge";
-import { BUILTIN_RELATIONSHIPS } from "../../constants/relationships";
+import { BUILTIN_RELATIONSHIPS, getFilterKey } from "../../constants/relationships";
 import { useUIStore } from "../../stores/useUIStore";
+import { useFilterStore } from "../../stores/useFilterStore";
 import { GraphCallbacksProvider } from "./GraphCallbacks";
 import { CanvasRenderer } from "../Canvas/CanvasRenderer";
 import { CanvasOverlay } from "../Canvas/CanvasOverlay";
@@ -111,6 +112,8 @@ function GraphCanvasInner({
   const drawingState = useUIStore((s) => s.drawingState);
   const setCurrentTool = useUIStore((s) => s.setCurrentTool);
   const setDrawingState = useUIStore((s) => s.setDrawingState);
+  const filterActive = useFilterStore((s) => s.active);
+  const selectedFilterKeys = useFilterStore((s) => s.selectedKeys);
   const { screenToFlowPosition, getNodes } = useReactFlow();
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
@@ -142,7 +145,62 @@ function GraphCanvasInner({
     setEdges(newEdges);
   }, [graph, converterService, setNodes, setEdges]);
 
-  // Derived edges with bundle zip-points computed from live node positions.
+  // Edges surviving the active relationship filter. Must run BEFORE the
+  // bundle-geometry pass below (finding 5 in the handoff): bundling off
+  // raw `edges` would compute zip-points using edges that are about to be
+  // hidden, producing wrong geometry for whatever actually remains.
+  const filteredEdges = useMemo(() => {
+    console.log({
+      filterActive,
+      selectedFilterKeys: [...selectedFilterKeys],
+      edgeTypes: edges
+        .filter((e) => e.data?.relationshipType)
+        .map((e) => ({
+          relationship: e.data!.relationshipType,
+          custom: e.data?.customLabel,
+          key: getFilterKey({
+            id: e.data!.relationshipType,
+            customLabel: e.data?.customLabel,
+          }),
+        })),
+    });
+  
+
+    if (!filterActive || selectedFilterKeys.size === 0) return edges;
+    return (edges as any[]).filter((edge) =>
+      selectedFilterKeys.has(
+        getFilterKey({ id: edge.data?.relationshipType, customLabel: edge.data?.customLabel }),
+      ),
+    );
+
+
+
+  }, [edges, filterActive, selectedFilterKeys]);
+
+  // When a filter is active, dim nodes that have no surviving edges so the
+  // graph stays spatially readable. We don't remove them (that disrupts drag
+  // state and position tracking) — we fade them instead. Nodes that are the
+  // source OR target of at least one surviving edge stay full-opacity.
+  const displayNodes = useMemo(() => {
+    if (!filterActive || selectedFilterKeys.size === 0) return nodes;
+
+    const connectedNodeIds = new Set<string>();
+    for (const edge of filteredEdges as any[]) {
+      connectedNodeIds.add(edge.source);
+      connectedNodeIds.add(edge.target);
+    }
+
+    return (nodes as any[]).map((node) =>
+      connectedNodeIds.has(node.id)
+        ? node
+        : {
+          ...node,
+          style: { ...node.style, opacity: 0.2, pointerEvents: "none" },
+        },
+    );
+  }, [nodes, filteredEdges, filterActive, selectedFilterKeys]);
+
+
   //
   // Two-pass design:
   //   Pass 1 — iterate leader edges, compute the zip point (position + geometry)
@@ -151,7 +209,7 @@ function GraphCanvasInner({
   //            belongs to a bundle gets the zip data injected so CustomEdge can
   //            render the trunk-then-diverge path and handle label dragging.
   const edgesWithOrigins = useMemo(() => {
-    const FORK_RATIO    = 0.30;
+    const FORK_RATIO = 0.30;
     const MIN_FORWARD_PX = 28;
 
     type BundleData = {
@@ -163,7 +221,7 @@ function GraphCanvasInner({
     const bundleDataMap = new Map<string, BundleData>();
 
     // --- Pass 1: build bundle geometry for every leader edge ---
-    for (const edge of edges as any[]) {
+    for (const edge of filteredEdges as any[]) {
       if (!edge.data?.isBundleLeader || !edge.data?.bundleTargetIds?.length) continue;
 
       const sourceNode = nodes.find((n: any) => n.id === edge.source);
@@ -223,27 +281,27 @@ function GraphCanvasInner({
 
       // Resolve the current zip ratio for this bundle.
       // Users can drag the label to change it; FORK_RATIO is the default.
-      const bundleKey = `${edge.source}:${edge.data.relationshipType}`;
-      const zipT      = zipTMap.get(bundleKey) ?? FORK_RATIO;
+      const bundleKey = `${edge.source}:${edge.data.relationshipType}:${edge.data.customLabel ?? ""}`;
+      const zipT = zipTMap.get(bundleKey) ?? FORK_RATIO;
       const forwardDist = Math.max(borderToAvgAlongAxis * zipT, MIN_FORWARD_PX);
 
       const perpMid = isFinite(minPerp) ? (minPerp + maxPerp) / 2 : 0;
 
       bundleDataMap.set(bundleKey, {
         zipX: hx + dx * forwardDist + (-dy) * perpMid,
-        zipY: hy + dy * forwardDist + (dx)  * perpMid,
-        bundleDx:          dx,
-        bundleDy:          dy,
-        bundleHx:          hx,
-        bundleHy:          hy,
+        zipY: hy + dy * forwardDist + (dx) * perpMid,
+        bundleDx: dx,
+        bundleDy: dy,
+        bundleHx: hx,
+        bundleHy: hy,
         // Guard against degenerate (zero-length) bundles.
-        bundleAxisLength:  Math.max(borderToAvgAlongAxis, 1),
+        bundleAxisLength: Math.max(borderToAvgAlongAxis, 1),
       });
     }
 
-    // --- Pass 2: annotate every edge that belongs to a bundle ---
-    return (edges as any[]).map((edge: any) => {
-      const bundleKey  = `${edge.source}:${edge.data?.relationshipType}`;
+    // --- Pass 2: annotate every surviving edge that belongs to a bundle ---
+    return (filteredEdges as any[]).map((edge: any) => {
+      const bundleKey = `${edge.source}:${edge.data?.relationshipType}:${edge.data?.customLabel ?? ""}`;
       const bundleData = bundleDataMap.get(bundleKey);
 
       // Singleton edges (no bundle) are returned unchanged — no behaviour diff.
@@ -254,23 +312,23 @@ function GraphCanvasInner({
         data: {
           ...edge.data,
           // Keep bundleOriginX/Y for backward compat with any other consumers.
-          bundleOriginX:    bundleData.zipX,
-          bundleOriginY:    bundleData.zipY,
+          bundleOriginX: bundleData.zipX,
+          bundleOriginY: bundleData.zipY,
           // Zip-specific fields consumed by CustomEdge.
-          zipX:             bundleData.zipX,
-          zipY:             bundleData.zipY,
-          bundleDx:         bundleData.bundleDx,
-          bundleDy:         bundleData.bundleDy,
-          bundleHx:         bundleData.bundleHx,
-          bundleHy:         bundleData.bundleHy,
+          zipX: bundleData.zipX,
+          zipY: bundleData.zipY,
+          bundleDx: bundleData.bundleDx,
+          bundleDy: bundleData.bundleDy,
+          bundleHx: bundleData.bundleHx,
+          bundleHy: bundleData.bundleHy,
           bundleAxisLength: bundleData.bundleAxisLength,
           bundleKey,
-          isInBundle:       true,
+          isInBundle: true,
           onZipDrag,
         },
       };
     });
-  }, [nodes, edges, zipTMap, onZipDrag]);
+  }, [nodes, filteredEdges, zipTMap, onZipDrag]);
 
   // --- Canvas drag overrides for real-time rendering ---
   const dragOverridesRef = useRef<Map<string, DragOverride>>(new Map());
@@ -633,36 +691,36 @@ function GraphCanvasInner({
         </div>
       )}
       <GraphCallbacksProvider value={{ onRenameNode, onAddNodeContent, onUpdateNodeContent, onResizeNode, onDeleteNode }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edgesWithOrigins}
-        onNodesChange={onNodesChangeWrapper}
-        onEdgesChange={onEdgesChangeWrapper}
-        onConnect={onConnect}
-        onNodeDoubleClick={onNodeDoubleClick}
-        onEdgeClick={onEdgeClick}
-        deleteKeyCode={null}
-        onPointerDown={onPointerDown}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        fitView
-        minZoom={0.1}
-        maxZoom={4}
-        defaultEdgeOptions={{
-          type: "custom-edge",
-          animated: false,
-        }}
-      >
-        <Background color="var(--app-grid)" gap={18} size={1.4} />
-        <Controls />
-        <MiniMap
-          pannable
-          zoomable
-          style={{ backgroundColor: "var(--app-surface)" }}
-          nodeColor="var(--app-accent)"
-          maskColor="rgba(0,0,0,0.35)"
-        />
-      </ReactFlow>
+        <ReactFlow
+          nodes={displayNodes}
+          edges={edgesWithOrigins}
+          onNodesChange={onNodesChangeWrapper}
+          onEdgesChange={onEdgesChangeWrapper}
+          onConnect={onConnect}
+          onNodeDoubleClick={onNodeDoubleClick}
+          onEdgeClick={onEdgeClick}
+          deleteKeyCode={null}
+          onPointerDown={onPointerDown}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          fitView
+          minZoom={0.1}
+          maxZoom={4}
+          defaultEdgeOptions={{
+            type: "custom-edge",
+            animated: false,
+          }}
+        >
+          <Background color="var(--app-grid)" gap={18} size={1.4} />
+          <Controls />
+          <MiniMap
+            pannable
+            zoomable
+            style={{ backgroundColor: "var(--app-surface)" }}
+            nodeColor="var(--app-accent)"
+            maskColor="rgba(0,0,0,0.35)"
+          />
+        </ReactFlow>
       </GraphCallbacksProvider>
       <CanvasOverlay
         objects={graph.canvas.objects}

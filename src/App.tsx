@@ -33,6 +33,9 @@ import RelationshipInspector from "./components/Panels/RelationshipInspector";
 import EdgeCreationDialog from "./components/Panels/EdgeCreationDialog";
 import CommandPalette from "./components/CommandPalette/CommandPalette";
 import ValidationOverlay from "./components/Validation/ValidationOverlay";
+import { RelationshipIndexService } from "./services/RelationshipIndexService";
+import { RelationshipIndexProvider } from "./constants/RelationshipIndexContext";
+import { useFilterStore } from "./stores/useFilterStore";
 import { join } from "@tauri-apps/api/path";
 import { exists, readDir, readJSON } from "./utils/fileSystem";
 import { loadGraph } from "./services/GraphService";
@@ -60,6 +63,8 @@ export default function App() {
     validator: WorkspaceValidator;
     pluginRegistry: PluginRegistry;
   } | null>(null);
+
+  const relationshipIndexRef = useRef<RelationshipIndexService | null>(null);
 
   const navStore = useNavigationStore();
   const graphStore = useGraphStore();
@@ -128,6 +133,19 @@ export default function App() {
     };
   }, []);
 
+  const buildRelationshipIndex = useCallback(() => {
+    const s = servicesRef.current;
+    if (!s) return;
+    relationshipIndexRef.current?.dispose();
+    relationshipIndexRef.current = new RelationshipIndexService(
+      s.graphService,
+      s.nodeService,
+      s.edgeService,
+      s.eventBus,
+      () => useFilterStore.getState().incrementIndexVersion(),
+    );
+  }, []);
+
   const handleCreateWorkspace = useCallback(
     async (path: string, name: string) => {
       const s = servicesRef.current;
@@ -143,10 +161,11 @@ export default function App() {
       setCurrentGraph(rootGraph);
       navStore.setCurrentGraphId(rootGraph.id);
       navStore.setBreadcrumbs([{ graphId: rootGraph.id, graphName: name }]);
+      buildRelationshipIndex();
       setView("workspace");
       setShowCreateDialog(false);
     },
-    [navStore],
+    [navStore, buildRelationshipIndex],
   );
 
   const handleOpenWorkspace = useCallback(
@@ -246,11 +265,12 @@ export default function App() {
       }
 
       setWorkspaceName(manifest.name);
+      buildRelationshipIndex();
       setView("workspace");
       setShowOpenDialog(false);
       console.log("[open-workspace] step 8: view switched to workspace");
     },
-    [navStore],
+    [navStore, buildRelationshipIndex],
   );
 
   const refreshGraph = useCallback(() => {
@@ -530,17 +550,19 @@ export default function App() {
           ) : undefined
         }
       >
-        <GraphCanvas
-          graph={currentGraph}
-          converterService={s.converterService}
-          commandHistoryService={s.commandHistoryService}
-          onRenameNode={handleRenameNode}
-          onAddNodeContent={handleAddNodeContent}
-          onUpdateNodeContent={handleUpdateNodeContent}
-          onResizeNode={handleResizeNode}
-          onOpenNodeGraph={handleOpenNodeGraph}
-          onDeleteNode={handleDeleteNode}
-        />
+        <RelationshipIndexProvider value={relationshipIndexRef.current!}>
+          <GraphCanvas
+            graph={currentGraph}
+            converterService={s.converterService}
+            commandHistoryService={s.commandHistoryService}
+            onRenameNode={handleRenameNode}
+            onAddNodeContent={handleAddNodeContent}
+            onUpdateNodeContent={handleUpdateNodeContent}
+            onResizeNode={handleResizeNode}
+            onOpenNodeGraph={handleOpenNodeGraph}
+            onDeleteNode={handleDeleteNode}
+          />
+        </RelationshipIndexProvider>
         <ValidationOverlay
           issues={issues}
           onDismiss={() => graphStore.setValidationIssues([])}

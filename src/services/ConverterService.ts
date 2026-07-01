@@ -23,6 +23,7 @@ interface ReactFlowEdge {
   data?: {
     edgeId: string;
     relationshipType: string;
+    customLabel?: string;
     displayLabel: string;
     description?: string;
     color?: string;
@@ -93,6 +94,7 @@ export class ConverterService {
         data: {
           edgeId: edge.id,
           relationshipType: edge.relationship.id,
+          customLabel: edge.relationship.customLabel,
           displayLabel,
           description: edge.description,
           color: relationshipColor,
@@ -103,7 +105,7 @@ export class ConverterService {
 
     const edgeGroups = new Map<string, ReactFlowEdge[]>();
     for (const edge of edges) {
-      const key = `${edge.source}:${edge.data!.relationshipType}`;
+      const key = `${edge.source}:${edge.data!.relationshipType}:${edge.data!.customLabel ?? ""}`;
       if (!edgeGroups.has(key)) edgeGroups.set(key, []);
       edgeGroups.get(key)!.push(edge);
     }
