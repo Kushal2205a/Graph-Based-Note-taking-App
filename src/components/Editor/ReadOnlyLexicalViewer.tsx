@@ -110,7 +110,7 @@ export default function ReadOnlyLexicalViewer({ editorState }: ReadOnlyLexicalVi
             <RichTextPlugin
                 contentEditable={
                     <ContentEditable
-                        className="text-xs leading-5 outline-none cursor-text nodrag nowheel"
+                        className="text-xs leading-5 outline-none nodrag nowheel"
                         style={{ color: "var(--app-text)" }}
                     />
                 }
