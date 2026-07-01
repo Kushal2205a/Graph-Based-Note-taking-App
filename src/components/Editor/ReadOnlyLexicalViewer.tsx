@@ -1,18 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
-import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
-import { ContentEditable } from "@lexical/react/LexicalContentEditable";
-import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
-import { ListPlugin } from "@lexical/react/LexicalListPlugin";
-import { ListNode, ListItemNode } from "@lexical/list";
-import { CodeNode, CodeHighlightNode, registerCodeHighlighting } from "@lexical/code";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-
-function CodeHighlightPlugin() {
-    const [editor] = useLexicalComposerContext();
-    useEffect(() => registerCodeHighlighting(editor), [editor]);
-    return null;
-}
+import { $generateHtmlFromNodes } from "@lexical/html";
+import { ListNode, ListItemNode } from "@lexical/list";
+import { CodeNode, CodeHighlightNode } from "@lexical/code";
 
 // Shared with LexicalEditor.tsx — consider extracting to lexicalTheme.ts
 const theme = {
@@ -68,26 +59,40 @@ const theme = {
 };
 
 /**
- * Inner plugin — reacts to editorState prop changes so the viewer stays
- * in sync when the parent re-renders with a different node's content.
- * No `loaded` guard: unlike the edit-mode LoadEditorStatePlugin we always
- * want to reflect the current prop (the component is read-only so there is
- * no risk of clobbering in-progress edits).
+ * Converts Lexical editor state into static HTML and renders it as a plain
+ * <div> instead of a contentEditable element. This ensures the read-only
+ * viewer behaves like static content: no text selection on drag, no pointer
+ * event capture, and the entire node surface remains draggable via React Flow.
  */
-function LoadStatePlugin({ editorState }: { editorState: string }) {
+function StaticHtmlRenderer({ editorState: propEditorState }: { editorState: string }) {
     const [editor] = useLexicalComposerContext();
+    const [html, setHtml] = useState("");
 
     useEffect(() => {
-        if (!editorState) return;
+        if (!propEditorState) {
+            setHtml("");
+            return;
+        }
         try {
-            const parsed = editor.parseEditorState(editorState);
+            const parsed = editor.parseEditorState(propEditorState);
             editor.setEditorState(parsed);
+            editor.getEditorState().read(() => {
+                setHtml($generateHtmlFromNodes(editor, null));
+            });
         } catch (err) {
             console.error("ReadOnlyLexicalViewer: failed to parse editor state", err);
         }
-    }, [editor, editorState]);
+    }, [editor, propEditorState]);
 
-    return null;
+    if (!html) return null;
+
+    return (
+        <div
+            className="text-xs leading-5 nodrag nowheel"
+            style={{ color: "var(--app-text)", userSelect: "none" }}
+            dangerouslySetInnerHTML={{ __html: html }}
+        />
+    );
 }
 
 interface ReadOnlyLexicalViewerProps {
@@ -99,7 +104,7 @@ export default function ReadOnlyLexicalViewer({ editorState }: ReadOnlyLexicalVi
         namespace: "KnowledgeGraphViewer",
         theme,
         nodes: [ListNode, ListItemNode, CodeNode, CodeHighlightNode],
-        editable: false,          // no caret, no editing, no cursor blink
+        editable: false,
         onError(error: Error) {
             console.error("ReadOnlyLexicalViewer error:", error);
         },
@@ -107,19 +112,7 @@ export default function ReadOnlyLexicalViewer({ editorState }: ReadOnlyLexicalVi
 
     return (
         <LexicalComposer initialConfig={initialConfig}>
-            <RichTextPlugin
-                contentEditable={
-                    <ContentEditable
-                        className="text-xs leading-5 outline-none nodrag nowheel"
-                        style={{ color: "var(--app-text)" }}
-                    />
-                }
-                placeholder={null}
-                ErrorBoundary={LexicalErrorBoundary}
-            />
-            <ListPlugin />
-            <CodeHighlightPlugin />
-            <LoadStatePlugin editorState={editorState} />
+            <StaticHtmlRenderer editorState={editorState} />
         </LexicalComposer>
     );
 }

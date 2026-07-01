@@ -27,7 +27,7 @@ export default function WelcomeScreen({
       style={{
         background: "var(--app-bg)",
         color: "var(--app-text)",
-        backgroundImage: "radial-gradient(var(--app-grid) 1.4px, transparent 1.4px)",
+        backgroundImage: `radial-gradient(${themeMode === "dark" ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)"} 1.4px, transparent 1.4px)`,
         backgroundSize: "18px 18px",
       }}
     >
