@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Eye, Pencil } from "lucide-react";
+import { Eye, Pencil, Settings } from "lucide-react";
 import Header from "./Header";
 import type { Breadcrumb } from "../../types";
 import type { CanvasTool } from "../../stores/useUIStore";
@@ -18,6 +18,8 @@ interface AppShellProps {
   onGoHome?: () => void;
   currentTool?: CanvasTool;
   onToolChange?: (tool: CanvasTool) => void;
+  /** Opens the project-specific settings panel (e.g. custom relationship colors). */
+  onOpenProjectSettings?: () => void;
   children: ReactNode;
   sidebar?: ReactNode;
 }
@@ -35,6 +37,7 @@ export default function AppShell({
   onGoHome,
   currentTool,
   onToolChange,
+  onOpenProjectSettings,
   children,
   sidebar,
 }: AppShellProps) {
@@ -66,6 +69,17 @@ export default function AppShell({
         )}
         <main className="flex-1 relative overflow-hidden">
           {children}
+          {onOpenProjectSettings && (
+            <button
+              type="button"
+              className="absolute right-4 top-4 z-40 flex h-10 w-10 items-center justify-center rounded-full border shadow-xl backdrop-blur transition-all duration-150 hover:scale-105"
+              style={{ background: "var(--app-panel)", borderColor: "var(--app-border)", color: "var(--app-muted)" }}
+              title="Project settings"
+              onClick={onOpenProjectSettings}
+            >
+              <Settings className="h-5 w-5" />
+            </button>
+          )}
           <button
             type="button"
             className="absolute right-4 top-1/2 z-40 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border shadow-xl backdrop-blur transition-all duration-150 hover:scale-105"
