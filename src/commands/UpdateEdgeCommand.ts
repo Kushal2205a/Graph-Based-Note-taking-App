@@ -14,7 +14,15 @@ export class UpdateEdgeCommand implements Command {
     this.newData = { ...newData };
   }
 
-  execute(ctx: CommandContext): void {
+  async execute(ctx: CommandContext): Promise<void> {
+    // Same persistence as CreateEdgeCommand: if this edit sets a custom
+    // relationship label, save it to the project so it's reusable
+    // elsewhere. Dedupes by label, so retyping an existing one is a no-op.
+    const rel = this.newData.relationship;
+    if (rel?.id === "custom" && rel.customLabel?.trim()) {
+      await ctx.workspaceService.addCustomRelationship(rel.customLabel);
+    }
+
     ctx.edgeService.update(this.edgeId, this.newData);
   }
 
