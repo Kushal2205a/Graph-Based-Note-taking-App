@@ -88,7 +88,7 @@ function StaticHtmlRenderer({ editorState: propEditorState }: { editorState: str
 
     return (
         <div
-            className="text-xs leading-5 nodrag nowheel"
+            className="text-xs leading-5 nowheel"
             style={{ color: "var(--app-text)", userSelect: "none" }}
             dangerouslySetInnerHTML={{ __html: html }}
         />
