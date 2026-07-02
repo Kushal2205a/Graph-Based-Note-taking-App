@@ -4,9 +4,21 @@ interface ShortcutMap {
   [key: string]: () => void;
 }
 
+function isEditingText(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable;
+}
+
 export function useKeyboardShortcuts(shortcuts: ShortcutMap): void {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Don't hijack native text editing (renaming a node, editing node
+      // content, typing in a dialog field, etc.) — let Delete/Backspace and
+      // Ctrl+C/Ctrl+V behave normally there.
+      if (isEditingText(e.target)) return;
+
       const ctrl = e.ctrlKey || e.metaKey;
       const shift = e.shiftKey;
       const key = e.key.toLowerCase();
