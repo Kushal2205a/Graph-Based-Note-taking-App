@@ -13,7 +13,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import ConceptNode from "./ConceptNode";
 import CustomEdge from "./CustomEdge";
-import { BUILTIN_RELATIONSHIPS, getFilterKey } from "../../constants/relationships";
+import { BUILTIN_RELATIONSHIPS, getFilterKey, getRelationshipMarkerKey } from "../../constants/relationships";
 import { useUIStore } from "../../stores/useUIStore";
 import { useFilterStore } from "../../stores/useFilterStore";
 import { GraphCallbacksProvider } from "./GraphCallbacks";
@@ -27,6 +27,7 @@ import { PasteWithEdgesCommand, type PasteEdgeInput } from "../../commands/Paste
 import type { PasteNodeInput } from "../../commands/PasteNodesCommand";
 import type { ConverterService } from "../../services/ConverterService";
 import type { CommandHistoryService } from "../../services/CommandHistoryService";
+import type { WorkspaceService } from "../../services/WorkspaceService";
 import type { Graph, CanvasObject, DragOverride, NodeContentDocument } from "../../types";
 import { DEFAULT_CANVAS_STYLE } from "../../types";
 
@@ -206,6 +207,7 @@ interface GraphCanvasInnerProps {
   graph: Graph;
   converterService: ConverterService;
   commandHistoryService: CommandHistoryService;
+  workspaceService: WorkspaceService;
   onRenameNode: (nodeId: string, newLabel: string) => void;
   onAddNodeContent: (nodeId: string) => void;
   onUpdateNodeContent: (nodeId: string, content: NodeContentDocument) => void;
@@ -219,6 +221,7 @@ const GraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(fu
   graph,
   converterService,
   commandHistoryService,
+  workspaceService,
   onRenameNode,
   onAddNodeContent,
   onUpdateNodeContent,
@@ -317,14 +320,14 @@ const GraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(fu
     const bounds = wrapperRef.current?.getBoundingClientRect();
     const fallbackAnchor = bounds
       ? findFreeSpawnPosition(
-          {
-            x: screenToFlowPosition({ x: bounds.left, y: bounds.top }).x,
-            y: screenToFlowPosition({ x: bounds.left, y: bounds.top }).y,
-            width: bounds.width,
-            height: bounds.height,
-          },
-          getNodes(),
-        )
+        {
+          x: screenToFlowPosition({ x: bounds.left, y: bounds.top }).x,
+          y: screenToFlowPosition({ x: bounds.left, y: bounds.top }).y,
+          width: bounds.width,
+          height: bounds.height,
+        },
+        getNodes(),
+      )
       : { x: 0, y: 0 };
     const anchor = lastCursorFlowPosRef.current ?? fallbackAnchor;
 
@@ -429,6 +432,8 @@ const GraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(fu
     if (changed) setSelectedNodeIds(ids);
   }, [nodes, selectedNodeIds, setSelectedNodeIds]);
 
+  
+
   // Edges surviving the active relationship filter. Must run BEFORE the
   // bundle-geometry pass below (finding 5 in the handoff): bundling off
   // raw `edges` would compute zip-points using edges that are about to be
@@ -448,7 +453,7 @@ const GraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(fu
           }),
         })),
     });
-  
+
 
     if (!filterActive || selectedFilterKeys.size === 0) return edges;
     return (edges as any[]).filter((edge) =>
@@ -582,6 +587,8 @@ const GraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(fu
         bundleAxisLength: Math.max(borderToAvgAlongAxis, 1),
       });
     }
+
+   
 
     // --- Pass 2: annotate every surviving edge that belongs to a bundle ---
     return (filteredEdges as any[]).map((edge: any) => {
@@ -920,6 +927,12 @@ const GraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(fu
     [graph.id, graph.canvas.objects, executeCmd, getNodes],
   );
 
+  const customRelationships = workspaceService.getCustomRelationships();
+  // Only recompute the marker defs when the set of custom relationships
+  // actually changes (additive-only, so length is a sufficient signal) —
+  // avoids rebuilding this SVG on every unrelated re-render.
+  const customRelationshipsKey = customRelationships.map((r) => r.displayName).join("|");
+
   const edgeMarkers = useMemo(() => (
     <svg aria-hidden="true" style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}>
       <defs>
@@ -944,9 +957,30 @@ const GraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(fu
             />
           </marker>
         ))}
+        {customRelationships.map((rel) => (
+          <marker
+            key={getRelationshipMarkerKey({ id: "custom", customLabel: rel.displayName })}
+            id={`edge-arrow-${getRelationshipMarkerKey({ id: "custom", customLabel: rel.displayName })}`}
+            viewBox="-10 -10 20 20"
+            refX={EDGE_MARKER_REF_X}
+            refY="0"
+            markerWidth="10"
+            markerHeight="10"
+            markerUnits="strokeWidth"
+            orient="auto"
+          >
+            <polyline
+              points="-5,-4 0,0 -5,4 -5,-4"
+              fill={rel.color}
+              stroke={rel.color}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </marker>
+        ))}
       </defs>
     </svg>
-  ), []);
+  ), [customRelationshipsKey]);
 
   const hasNodes = graph.nodeIds.length > 0;
   const hasEdges = graph.edgeIds.length > 0;
@@ -993,7 +1027,7 @@ const GraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(fu
           multiSelectionKeyCode={["Shift", "Meta", "Control"]}
           selectionKeyCode="Shift"
           selectionOnDrag={currentTool === "select"}
-          panOnDrag={currentTool === "select" ? [1, 2] : true}
+          panOnDrag={true}
           defaultEdgeOptions={{
             type: "custom-edge",
             animated: false,
