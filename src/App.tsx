@@ -29,6 +29,7 @@ import CreateWorkspaceDialog from "./components/Welcome/CreateWorkspaceDialog";
 import OpenWorkspaceDialog from "./components/Welcome/OpenWorkspaceDialog";
 import AppShell from "./components/Layout/AppShell";
 import GraphCanvas, { type GraphCanvasHandle } from "./components/Graph/GraphCanvas";
+import UpdateNotifier from "./components/Update/UpdateNotifier";
 import RelationshipInspector from "./components/Panels/RelationshipInspector";
 import EdgeCreationDialog from "./components/Panels/EdgeCreationDialog";
 import CommandPalette from "./components/CommandPalette/CommandPalette";
@@ -483,6 +484,7 @@ export default function App() {
   if (view === "welcome") {
     return (
       <>
+        <UpdateNotifier />
         <WelcomeScreen
           recents={recents}
           onCreateWorkspace={() => setShowCreateDialog(true)}
@@ -508,9 +510,12 @@ export default function App() {
 
   if (!s || !currentGraph) {
     return (
-      <div className="w-full h-full flex items-center justify-center text-white/50" style={{ background: "var(--app-bg)" }}>
-        Loading...
-      </div>
+      <>
+        <UpdateNotifier />
+        <div className="w-full h-full flex items-center justify-center text-white/50" style={{ background: "var(--app-bg)" }}>
+          Loading...
+        </div>
+      </>
     );
   }
 
@@ -525,6 +530,7 @@ export default function App() {
 
   return (
     <>
+      <UpdateNotifier />
       <AppShell
         workspaceName={workspaceName}
         breadcrumbs={navStore.breadcrumbs}
