@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -81,6 +81,11 @@ function getCoveredCanvasObjects(obj: CanvasObject, canvasObjects: CanvasObject[
     .map((other) => other.id);
 }
 
+export interface GraphCanvasHandle {
+  /** Current viewport center in flow coordinates — where a new node should spawn. */
+  getViewportCenter: () => { x: number; y: number };
+}
+
 interface GraphCanvasInnerProps {
   graph: Graph;
   converterService: ConverterService;
@@ -93,7 +98,7 @@ interface GraphCanvasInnerProps {
   onDeleteNode: (nodeId: string) => void;
 }
 
-function GraphCanvasInner({
+const GraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(function GraphCanvasInner({
   graph,
   converterService,
   commandHistoryService,
@@ -103,7 +108,8 @@ function GraphCanvasInner({
   onResizeNode,
   onOpenNodeGraph,
   onDeleteNode,
-}: GraphCanvasInnerProps) {
+}, ref) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const openCreateEdgeDialog = useUIStore((s) => s.openCreateEdgeDialog);
   const openRelationshipInspector = useUIStore((s) => s.openRelationshipInspector);
   const currentTool = useUIStore((s) => s.currentTool);
@@ -115,6 +121,17 @@ function GraphCanvasInner({
   const filterActive = useFilterStore((s) => s.active);
   const selectedFilterKeys = useFilterStore((s) => s.selectedKeys);
   const { screenToFlowPosition, getNodes } = useReactFlow();
+
+  useImperativeHandle(ref, () => ({
+    getViewportCenter: () => {
+      const bounds = wrapperRef.current?.getBoundingClientRect();
+      if (!bounds) return { x: 0, y: 0 };
+      return screenToFlowPosition({
+        x: bounds.left + bounds.width / 2,
+        y: bounds.top + bounds.height / 2,
+      });
+    },
+  }), [screenToFlowPosition]);
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => converterService.toReactFlow(graph),
@@ -670,7 +687,7 @@ function GraphCanvasInner({
   const isEmpty = !hasNodes && !hasEdges && !hasCanvasObjects;
 
   return (
-    <div className="w-full h-full relative" style={{ background: "var(--app-bg)" }}>
+    <div ref={wrapperRef} className="w-full h-full relative" style={{ background: "var(--app-bg)" }}>
       {edgeMarkers}
       <CanvasRenderer
         objects={graph.canvas.objects}
@@ -742,12 +759,14 @@ function GraphCanvasInner({
       />
     </div>
   );
-}
+});
 
-export default function GraphCanvas(props: GraphCanvasInnerProps) {
+const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasInnerProps>(function GraphCanvas(props, ref) {
   return (
     <ReactFlowProvider>
-      <GraphCanvasInner {...props} />
+      <GraphCanvasInner {...props} ref={ref} />
     </ReactFlowProvider>
   );
-}
+});
+
+export default GraphCanvas;
