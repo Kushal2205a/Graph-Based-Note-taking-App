@@ -32,24 +32,24 @@ export class CreateEdgeCommand implements Command {
   }
 
   async execute(ctx: CommandContext): Promise<void> {
-    console.log("[CreateEdgeCommand.execute] handle values:", { sourceHandle: this.sourceHandle, targetHandle: this.targetHandle });
-    console.log("[CreateEdgeCommand.execute] edgeService defined:", !!ctx.edgeService);
-    try {
-      const result = await ctx.edgeService.create(this.graphId, {
-        sourceId: this.sourceId,
-        targetId: this.targetId,
-        sourceHandle: this.sourceHandle,
-        targetHandle: this.targetHandle,
-        relationshipId: this.relationshipId,
-        customLabel: this.customLabel,
-      });
-      console.log("[CreateEdgeCommand.execute] create SUCCESS, edgeId:", result.edge.id, "sourceHandle:", result.edge.sourceHandle, "targetHandle:", result.edge.targetHandle);
-
-      this.edgeId = result.edge.id;
-      ctx.graphService.addEdgeId(this.graphId, result.edge.id, result.view);
-    } catch (err) {
-      console.error("[CreateEdgeCommand.execute] ERROR:", err);
+    // Persist a new custom relationship label to the project so it's
+    // reusable on any future edge, in any graph. No-ops (dedupes) if a
+    // custom relationship with this label already exists.
+    if (this.relationshipId === "custom" && this.customLabel?.trim()) {
+      await ctx.workspaceService.addCustomRelationship(this.customLabel);
     }
+
+    const result = await ctx.edgeService.create(this.graphId, {
+      sourceId: this.sourceId,
+      targetId: this.targetId,
+      sourceHandle: this.sourceHandle,
+      targetHandle: this.targetHandle,
+      relationshipId: this.relationshipId,
+      customLabel: this.customLabel,
+    });
+
+    this.edgeId = result.edge.id;
+    ctx.graphService.addEdgeId(this.graphId, result.edge.id, result.view);
   }
 
   undo(ctx: CommandContext): void {
