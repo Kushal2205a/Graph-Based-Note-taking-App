@@ -6,6 +6,7 @@ import {
   useReactFlow,
   type EdgeProps,
 } from "@xyflow/react";
+import { getRelationshipMarkerKey } from "../../constants/relationships";
 
 const LABEL_OFFSET_Y = 14;
 const EDGE_LABEL_BG_ALPHA = "15";
@@ -80,10 +81,11 @@ function CustomEdge({
   const color            = edgeData?.color            ?? "#71717a";
   const label            = edgeData?.displayLabel     ?? "";
   const relationshipType = edgeData?.relationshipType ?? "custom";
+  const customLabel      = edgeData?.customLabel;
   const isBundleLeader   = edgeData?.isBundleLeader   ?? true;
   const bundleOriginX    = edgeData?.bundleOriginX;
   const bundleOriginY    = edgeData?.bundleOriginY;
-  const markerEnd        = `url(#edge-arrow-${relationshipType})`;
+  const markerEnd        = `url(#edge-arrow-${getRelationshipMarkerKey({ id: relationshipType, customLabel })})`;
 
   // --- Zip / bundle data (injected by GraphCanvas.edgesWithOrigins) ---
   const isInBundle: boolean                                      = edgeData?.isInBundle      ?? false;
