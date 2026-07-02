@@ -28,6 +28,7 @@ interface UIState {
   themeMode: ThemeMode;
   selectedCanvasObjectId: string | null;
   drawingState: DrawingState | null;
+  selectedNodeIds: string[];
 
   openRelationshipInspector: (edgeId: string) => void;
   closeRelationshipInspector: () => void;
@@ -42,6 +43,7 @@ interface UIState {
   toggleThemeMode: () => void;
   setSelectedCanvasObjectId: (id: string | null) => void;
   setDrawingState: (state: DrawingState | null) => void;
+  setSelectedNodeIds: (ids: string[]) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -55,6 +57,7 @@ export const useUIStore = create<UIState>((set) => ({
   themeMode: "dark",
   selectedCanvasObjectId: null,
   drawingState: null,
+  selectedNodeIds: [],
 
   openRelationshipInspector: (edgeId) =>
     set({ relationshipInspectorOpen: true, selectedEdgeId: edgeId }),
@@ -74,4 +77,5 @@ export const useUIStore = create<UIState>((set) => ({
   toggleThemeMode: () => set((state) => ({ themeMode: state.themeMode === "dark" ? "light" : "dark" })),
   setSelectedCanvasObjectId: (id) => set({ selectedCanvasObjectId: id }),
   setDrawingState: (state) => set({ drawingState: state }),
+  setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids }),
 }));
